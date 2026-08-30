@@ -537,6 +537,8 @@ if market_dict:
               "官方名稱",
               "外本比(%)",
               "外資買賣超張數",
+/usr/local/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py:1120: FutureWarning:
+The default fill_value of DataFrame.pivot is deprecated and will be removed in a future version. Use a specific fill_value to silence this warning.
               "收盤價",
               "漲跌幅(%)",
           ]],
@@ -578,6 +580,7 @@ if market_dict:
       st.caption(
           "💡 此處自動篩選**同時名列**「當日外本比 Top"
           " 50」與「全市場成交值 Top 100」的雙榜強勢個股，並依外本比由高到低排序！"
+          " 名稱旁自動附帶【日K/週K多空判定】。"
       )
 
       set_wben = set(df_wben50["代號"])
@@ -589,6 +592,77 @@ if market_dict:
           .sort_values(by="外本比(%)", ascending=False)
           .copy()
       )
+
+      # 動態計算雙榜交集標的的日K與週K多空狀態
+      with st.spinner("正在為雙榜標的運算日K與週K多空成本線狀態..."):
+        enhanced_names = []
+        for _, r_item in df_cross.iterrows():
+          c_code = str(r_item["代號"])
+          o_name = str(r_item["官方名稱"])
+          status_str = ""
+
+          try:
+            # 抓取日K與週K
+            df_d = yf.download(
+                f"{c_code}.TW", period="3mo", interval="1d", progress=False
+            )
+            if df_d.empty:
+              df_d = yf.download(
+                  f"{c_code}.TWO", period="3mo", interval="1d", progress=False
+              )
+
+            df_w = yf.download(
+                f"{c_code}.TW", period="1y", interval="1wk", progress=False
+            )
+            if df_w.empty:
+              df_w = yf.download(
+                  f"{c_code}.TWO", period="1y", interval="1wk", progress=False
+              )
+
+            # 判定日K
+            day_ok = False
+            if not df_d.empty:
+              if isinstance(df_d.columns, pd.MultiIndex):
+                df_d.columns = df_d.columns.get_level_values(0)
+              df_d["Mid"] = (df_d["High"] + df_d["Low"]) / 2
+              df_d["MA"] = df_d["Mid"].rolling(20).mean()
+              if (
+                  len(df_d) > 0
+                  and df_d["Close"].iloc[-1] >= df_d["MA"].iloc[-1]
+              ):
+                day_ok = True
+
+            # 判定週K
+            week_ok = False
+            if not df_w.empty:
+              if isinstance(df_w.columns, pd.MultiIndex):
+                df_w.columns = df_w.columns.get_level_values(0)
+              df_w["Mid"] = (df_w["High"] + df_w["Low"]) / 2
+              df_w["MA"] = df_w["Mid"].rolling(10).mean()
+              if (
+                  len(df_w) > 0
+                  and df_w["Close"].iloc[-1] >= df_w["MA"].iloc[-1]
+              ):
+                week_ok = True
+
+            # 組合字串
+            if day_ok and week_ok:
+              status_str = " (雙多)"
+            elif not day_ok and not week_ok:
+              status_str = " (雙空)"
+            elif day_ok and not week_ok:
+              status_str = " (短多長空)"
+            elif not day_ok and week_ok:
+              status_str = " (長多短空)"
+            else:
+              status_str = " (盤整)"
+          except:
+            status_str = " (未知)"
+
+          enhanced_names.append(f"{o_name}{status_str}")
+
+        df_cross["官方名稱"] = enhanced_names
+
       df_cross.insert(0, "交叉排行", range(1, len(df_cross) + 1))
       if "成交金額(億)" not in df_cross.columns:
         df_cross["成交金額(億)"] = round(df_cross["總成交金額_元"] / 1e8, 2)
@@ -723,7 +797,7 @@ if market_dict:
                   })
 
           if all_trades:
-            df_result = pd.DataFrame(all_trades)
+            df_result = pd.DataFrame(df_result) if 'df_result' in locals() else pd.DataFrame(all_trades)
             win_t = len(df_result[df_result["持有報酬率(%)"] > 0])
             total_t = len(df_result)
             final_win_rate = (

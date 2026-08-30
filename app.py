@@ -19,12 +19,12 @@ st.set_page_config(
 st.title("⚡ 台股外資買超 Top 50 與籌碼專屬排行終端機")
 st.caption(
     "🔄 100% 串接證交所官方 API | "
-    "精準股數外本比、連買天數與成交值佔比追蹤，支援點擊排行即時檢視 10/20 日均價走勢"
+    "全面以『外本比』精準計算：買超 Top 50、外本比 Top 50、連續買超 Top 50、成交值 Top 100"
 )
 
 
 # ============================================================
-# 側邊欄設定 (保留您的排序與指標說明)
+# 側邊欄設定
 # ============================================================
 
 with st.sidebar:
@@ -34,9 +34,9 @@ with st.sidebar:
     sort_option = st.selectbox(
         "Top 50 主表格排序依據：",
         options=[
+            "🔥 外本比 (外資買超股數佔發行總股數比例 - 優先)",
             "📈 外資買超張數 (與證交所官網預設一致)",
             "💰 外資買超金額 (資金砸最多優先)",
-            "🔥 外本比 (外資買超股數佔發行總股數比例)",
             "🎯 買超金額佔成交值比 (當日籌碼貢獻佔比)",
             "⏳ 連續買超天數 (連買最久優先)"
         ],
@@ -48,10 +48,8 @@ with st.sidebar:
     st.markdown(
         """
         💡 **指標說明**：
-
+        - **外本比 (%)**：(外資買超股數 ÷ 官方發行總股數) × 100%。全排行榜同步納入計算。
         - **外資買超金額**：買超張數 × 平均價格 (VWAP) × 1000。
-        - **外本比 (%)**：(外資買超股數 ÷ 官方發行總股數) × 100%。
-        - **買超佔成交值比 (%)**：今日買超金額佔該股總成交金額比例。
         """
     )
 
@@ -73,7 +71,7 @@ def fetch_twse_data():
     curr = datetime.now()
     dates = []
 
-    while len(dates) < 5 and (datetime.now() - curr).days < 20:
+    while len(dates) < 10 and (datetime.now() - curr).days < 30:
 
         if curr.weekday() < 5:
 
@@ -184,62 +182,66 @@ if latest_date:
 
 
 # ============================================================
-# 建立資料表
+# 建立資料表與全面外本比導向計算
 # ============================================================
 
-if market_dict and latest_foreign_shares:
+if market_dict:
     combined_rows = []
 
-    for code, f_shares in latest_foreign_shares.items():
-        if f_shares > 0 and code in market_dict:
-            m_info = market_dict[code]
-            combined_rows.append({
-                "代號": code,
-                "官方名稱": m_info["官方名稱"],
-                "發行總股數": m_info["發行總股數"],
-                "外資買超股數": f_shares,
-                "外資買超張數": f_shares / 1000,
-                "收盤價": m_info["收盤價"],
-                "成交均價": m_info["成交均價"],
-                "總成交金額_元": m_info["總成交金額_元"],
-                "漲跌幅(%)": m_info["漲跌幅(%)"]
-            })
+    # 確保市場清單中的每一檔標的都納入計算 (即使T86未列出也給0)
+    for code, m_info in market_dict.items():
+        f_shares = latest_foreign_shares.get(code, 0)
+        combined_rows.append({
+            "代號": code,
+            "官方名稱": m_info["官方名稱"],
+            "發行總股數": m_info["發行總股數"],
+            "外資買賣超股數": f_shares,
+            "外資買賣超張數": f_shares / 1000,
+            "收盤價": m_info["收盤價"],
+            "成交均價": m_info["成交均價"],
+            "總成交金額_元": m_info["總成交金額_元"],
+            "漲跌幅(%)": m_info["漲跌幅(%)"]
+        })
 
     df_all = pd.DataFrame(combined_rows)
 
     if not df_all.empty:
-        df_top50 = df_all.sort_values(by="外資買超張數", ascending=False).head(50).copy()
-
+        
+        # 1. 計算連續買超天數
         def calc_streak(code):
             streak = 0
             for d_str in target_dates:
-                if code in hist_foreign_shares.get(d_str, {}):
-                    if hist_foreign_shares[d_str][code] > 0:
-                        streak += 1
-                    else:
-                        break
+                val = hist_foreign_shares.get(d_str, {}).get(code, 0)
+                if val > 0:
+                    streak += 1
                 else:
                     break
             return streak
 
-        df_top50["連續買超天數"] = df_top50["代號"].apply(calc_streak)
-        df_top50["外資買超金額_元"] = df_top50["外資買超張數"] * 1000 * df_top50["成交均價"]
-        df_top50["外資買超金額(億)"] = round(df_top50["外資買超金額_元"] / 1e8, 2)
-        df_top50["外本比(%)"] = df_top50.apply(
-            lambda row: round((row["外資買超股數"] / row["發行總股數"]) * 100, 3) if row["發行總股數"] > 0 else 0.0,
+        df_all["連續買超天數"] = df_all["代號"].apply(calc_streak)
+        
+        # 2. 精準外本比計算 (%) (含負數/賣超或買超)
+        df_all["外本比(%)"] = df_all.apply(
+            lambda row: round((row["外資買賣超股數"] / row["發行總股數"]) * 100, 3) if row["發行總股數"] > 0 else 0.0,
             axis=1
         )
-        df_top50["買超金額佔成交值比(%)"] = df_top50.apply(
+        
+        df_all["外資買超金額_元"] = df_all["外資買賣超張數"] * 1000 * df_all["成交均價"]
+        df_all["外資買超金額(億)"] = round(df_all["外資買超金額_元"] / 1e8, 2)
+        df_all["買超金額佔成交值比(%)"] = df_all.apply(
             lambda row: round((row["外資買超金額_元"] / row["總成交金額_元"]) * 100, 2) if row["總成交金額_元"] > 0 else 0.0,
             axis=1
         )
 
-        if "買超張數" in sort_option:
-            df_top50 = df_top50.sort_values(by="外資買超張數", ascending=False)
+        # A. 外資買超 Top 50
+        df_top50 = df_all[df_all["外資買賣超張數"] > 0].sort_values(by="外資買賣超張數", ascending=False).head(50).copy()
+
+        if "外本比" in sort_option:
+            df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
+        elif "買超張數" in sort_option:
+            df_top50 = df_top50.sort_values(by="外資買賣超張數", ascending=False)
         elif "買超金額" in sort_option:
             df_top50 = df_top50.sort_values(by="外資買超金額(億)", ascending=False)
-        elif "外本比" in sort_option:
-            df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
         elif "佔成交值比" in sort_option:
             df_top50 = df_top50.sort_values(by="買超金額佔成交值比(%)", ascending=False)
         else:
@@ -247,27 +249,43 @@ if market_dict and latest_foreign_shares:
 
         df_top50.insert(0, "集中排序", range(1, len(df_top50) + 1))
 
+        # B. 當日外本比排行 Top 50
+        df_wben50 = df_all[df_all["外本比(%)"] > 0].sort_values(
+            by=["外本比(%)", "外資買賣超張數"], ascending=[False, False]
+        ).head(50).copy()
+        df_wben50.insert(0, "外本比排序", range(1, len(df_wben50) + 1))
+
+        # C. 連續買超天數 Top 50
+        df_streak50 = df_all[df_all["連續買超天數"] > 0].sort_values(
+            by=["連續買超天數", "外本比(%)"], ascending=[False, False]
+        ).head(50).copy()
+        df_streak50.insert(0, "連買排序", range(1, len(df_streak50) + 1))
+
+        # D. 當日全市場成交值排行 Top 100 (已完整計算外本比)
+        df_vol100 = df_all.sort_values(by="總成交金額_元", ascending=False).head(100).copy()
+        df_vol100["成交金額(億)"] = round(df_vol100["總成交金額_元"] / 1e8, 2)
+        df_vol100.insert(0, "成交值排序", range(1, len(df_vol100) + 1))
+
         # 頂部看板
         total_foreign_amount = round(df_top50["外資買超金額(億)"].sum(), 2)
-        most_concentrated = df_top50.sort_values(by="外本比(%)", ascending=False).iloc[0]
+        most_concentrated = df_all.sort_values(by="外本比(%)", ascending=False).iloc[0]
         top_amount_stock = df_top50.sort_values(by="外資買超金額(億)", ascending=False).iloc[0]
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("📊 Top 50 總買超金額", f"{total_foreign_amount} 億")
         c2.metric("🎯 監控標的檔數", f"{len(df_top50)} 檔")
-        c3.metric("🔥 股本外本比最高", f"{most_concentrated['官方名稱']} ({most_concentrated['代號']})", f"外本比 {most_concentrated['外本比(%)']}%")
+        c3.metric("🔥 全市場外本比最高", f"{most_concentrated['官方名稱']} ({most_concentrated['代號']})", f"外本比 {most_concentrated['外本比(%)']}%")
         c4.metric("💰 砸錢最多之冠", f"{top_amount_stock['官方名稱']} ({top_amount_stock['代號']})", f"+{top_amount_stock['外資買超金額(億)']} 億")
 
         st.markdown("---")
 
         # ====================================================
-        # 互動點擊叫出走勢圖區塊 (從排行榜點選代號)
+        # 個股互動技術分析與 10/20 日均價走勢檢視
         # ====================================================
         st.subheader("📈 個股技術分析與 10/20 日均價走勢檢視")
         
-        # 製作一個選單，列出 Top 50 所有股票供點選
-        stock_options = [f"{row['代號']} {row['官方名稱']}" for _, row in df_top50.iterrows()]
-        selected_stock_str = st.selectbox("👉 請從下方下拉選單（或點選）想查看走勢的標的：", options=stock_options, index=0)
+        all_stock_options = [f"{row['代號']} {row['官方名稱']}" for _, row in df_all.sort_values(by="代號").iterrows()]
+        selected_stock_str = st.selectbox("👉 請從下拉選單選擇（或輸入）想查看 10/20 日均價走勢的標的：", options=all_stock_options, index=0)
         
         if selected_stock_str:
             target_code = selected_stock_str.split(" ")[0]
@@ -314,38 +332,29 @@ if market_dict and latest_foreign_shares:
 
         st.markdown("---")
 
-        # 分頁
-        tab_rank, tab_special_rank = st.tabs([
-            "🔥 Top 50 外資買超完整排行",
-            "🏆 兩大專屬籌碼排行 (股數外本比 / 連買天數)"
+        # ====================================================
+        # 四大外本比與成交值專屬排行榜分頁
+        # ====================================================
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "🔥 外資買超 Top 50", 
+            "🔥 當日外本比 Top 50", 
+            "⏳ 連續買超 Top 50 (外本比優先)", 
+            "🏆 全市場成交值 Top 100 (含外本比)"
         ])
 
-        with tab_rank:
-            col_t1, col_t2 = st.columns([4, 1])
-            with col_t1:
-                st.subheader("📋 外資買超 Top 50 全部標的完整清單")
-            with col_t2:
-                export_df = df_top50[[
-                    "集中排序", "代號", "官方名稱", "外資買超張數",
-                    "成交均價", "外資買超金額(億)", "外本比(%)",
-                    "買超金額佔成交值比(%)", "連續買超天數", "漲跌幅(%)"
-                ]]
-                csv_data = export_df.to_csv(index=False).encode("utf-8-sig")
-                st.download_button(
-                    label="📥 下載完整 CSV",
-                    data=csv_data,
-                    file_name=f"外資買超Top50_{latest_date}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-
+        # TAB 1: 外資買超 Top 50
+        with tab1:
+            st.subheader("📋 外資買超 Top 50 全部標的完整清單")
+            export_df1 = df_top50[[
+                "集中排序", "代號", "官方名稱", "外資買賣超張數",
+                "成交均價", "外資買超金額(億)", "外本比(%)",
+                "買超金額佔成交值比(%)", "連續買超天數", "漲跌幅(%)"
+            ]]
             st.dataframe(
-                export_df,
+                export_df1,
                 column_config={
-                    "集中排序": "排名",
-                    "代號": "代號",
-                    "官方名稱": "名稱",
-                    "外資買超張數": st.column_config.NumberColumn("📈 買超張數", format="%d 張"),
+                    "集中排序": "排名", "代號": "代號", "官方名稱": "名稱",
+                    "外資買賣超張數": st.column_config.NumberColumn("📈 買超張數", format="%d 張"),
                     "成交均價": st.column_config.NumberColumn("成交均價", format="%.2f"),
                     "外資買超金額(億)": st.column_config.NumberColumn("💰 買超金額", format="%.2f 億"),
                     "外本比(%)": st.column_config.NumberColumn("🔥 外本比 (股數佔比)", format="%.3f %%"),
@@ -353,43 +362,69 @@ if market_dict and latest_foreign_shares:
                     "連續買超天數": st.column_config.NumberColumn("連買天數", format="%d 天"),
                     "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
                 },
-                use_container_width=True,
-                hide_index=True,
-                height=650
+                use_container_width=True, hide_index=True, height=600
             )
 
-        with tab_special_rank:
-            st.subheader("🏆 兩大焦點籌碼專屬排行")
-            c_s1, c_s2 = st.columns(2)
+        # TAB 2: 當日外本比 Top 50
+        with tab2:
+            st.subheader("🔥 當日外本比最高排行 Top 50")
+            export_df2 = df_wben50[[
+                "外本比排序", "代號", "官方名稱", "外本比(%)",
+                "外資買賣超張數", "收盤價", "漲跌幅(%)"
+            ]]
+            st.dataframe(
+                export_df2,
+                column_config={
+                    "外本比排序": "排名", "代號": "代號", "官方名稱": "名稱",
+                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比", format="%.3f %%"),
+                    "外資買賣超張數": st.column_config.NumberColumn("買賣超張數", format="%d 張"),
+                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
+                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
+                },
+                use_container_width=True, hide_index=True, height=600
+            )
 
-            with c_s1:
-                st.markdown("### 🔥 1. 當日外本比最高排行 Top 15")
-                df_r1 = df_top50.sort_values(by="外本比(%)", ascending=False).head(15)
-                st.dataframe(
-                    df_r1[["代號", "官方名稱", "外本比(%)", "外資買超張數"]],
-                    column_config={
-                        "代號": "代號",
-                        "官方名稱": "名稱",
-                        "外本比(%)": st.column_config.NumberColumn("外本比", format="%.3f %%"),
-                        "外資買超張數": st.column_config.NumberColumn("買超張數", format="%d 張")
-                    },
-                    use_container_width=True, hide_index=True, height=500
-                )
+        # TAB 3: 連續買超 Top 50
+        with tab3:
+            st.subheader("⏳ 連續買超天數最多排行 Top 50")
+            export_df3 = df_streak50[[
+                "連買排序", "代號", "官方名稱", "連續買超天數",
+                "外本比(%)", "外資買賣超張數", "收盤價", "漲跌幅(%)"
+            ]]
+            st.dataframe(
+                export_df3,
+                column_config={
+                    "連買排序": "排名", "代號": "代號", "官方名稱": "名稱",
+                    "連續買超天數": st.column_config.NumberColumn("⏳ 連買天數", format="%d 天"),
+                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比", format="%.3f %%"),
+                    "外資買賣超張數": st.column_config.NumberColumn("最新買超張數", format="%d 張"),
+                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
+                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
+                },
+                use_container_width=True, hide_index=True, height=600
+            )
 
-            with c_s2:
-                st.markdown("### ⏳ 2. 連續買超天數最多排行 Top 15")
-                df_r2 = df_top50.sort_values(by=["連續買超天數", "外本比(%)"], ascending=[False, False]).head(15)
-                st.dataframe(
-                    df_r2[["代號", "官方名稱", "連續買超天數", "外本比(%)"]],
-                    column_config={
-                        "代號": "代號",
-                        "官方名稱": "名稱",
-                        "連續買超天數": st.column_config.NumberColumn("連買天數", format="%d 天"),
-                        "外本比(%)": st.column_config.NumberColumn("外本比", format="%.3f %%")
-                    },
-                    use_container_width=True, hide_index=True, height=500
-                )
+        # TAB 4: 全市場成交值 Top 100 (外本比已加入)
+        with tab4:
+            st.subheader("🏆 全市場成交金額百大焦點排行 Top 100 (已納入外本比計算)")
+            export_df4 = df_vol100[[
+                "成交值排序", "代號", "官方名稱", "成交金額(億)",
+                "外本比(%)", "收盤價", "漲跌幅(%)", "總成交金額_元"
+            ]]
+            st.dataframe(
+                export_df4,
+                column_config={
+                    "成交值排序": "排名", "代號": "代號", "官方名稱": "名稱",
+                    "成交金額(億)": st.column_config.NumberColumn("💰 成交金額", format="%.2f 億"),
+                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比 (股數佔比)", format="%.3f %%"),
+                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
+                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%"),
+                    "總成交金額_元": None
+                },
+                use_container_width=True, hide_index=True, height=600
+            )
+
     else:
-        st.warning("無法解析出外資買超資料。")
+        st.warning("無法解析出市場與外資買超資料。")
 else:
     st.warning("目前無法取得證交所官方市場行情資料，請確認網路連線或是否為非交易日。")

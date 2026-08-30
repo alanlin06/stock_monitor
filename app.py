@@ -609,34 +609,33 @@ if market_dict:
       )
 
     # ====================================================
-    # 📈 嚴謹版：外本比策略歷史回測看板 (逐日滾動計算)
+    # 📈 雙榜交叉比對策略歷史回測看板 (嚴謹逐日滾動版)
     # ====================================================
     st.markdown("---")
-    st.header("📈 外本比策略歷史回測看板 (嚴謹逐日滾動版)")
+    st.header(
+        "📈 雙榜交叉比對策略歷史回測看板 (嚴謹逐日滾動版 - 依雙榜交集外本比)"
+    )
     st.markdown(
-        "💡 依據歷史每日的 **外本比排名** 與 **多空成本均價線濾網**"
-        "（收盤價高於多空線才進場），精確模擬多期進場的真實勝率與平均報酬。"
+        "💡 依據歷史每日的 **外本比 Top 50 ∩ 總成交值 Top 100**"
+        " 雙榜交集強勢股，並結合多空成本均價線濾網，精確模擬真實勝率。"
     )
 
-    bc1, bc2, bc3 = st.columns(3)
+    bc1, bc2 = st.columns(2)
     with bc1:
-      backtest_top_n = st.number_input(
-          "選取外本比前 N 檔", min_value=5, max_value=50, value=20, key="bt_top_n"
+      holding_days = st.number_input(
+          "模擬持有天數", min_value=1, max_value=60, value=20, key="bt_hold_cross"
       )
     with bc2:
-      holding_days = st.number_input(
-          "模擬持有天數", min_value=1, max_value=60, value=20, key="bt_hold"
-      )
-    with bc3:
       use_trend_filter = st.checkbox(
-          "啟用多空均價線濾網 (收盤價 >= 多空線)", value=True, key="bt_filter"
+          "啟用多空均價線濾網 (收盤價 >= 多空線)",
+          value=True,
+          key="bt_filter_cross",
       )
 
-    if st.button("🚀 開始執行嚴謹歷史逐日回測", key="btn_run_bt"):
-      with st.spinner("正在進行歷史每日籌碼與 K 棒滾動回測運算中..."):
+    if st.button("🚀 開始執行雙榜交集歷史回測", key="btn_run_cross_bt"):
+      with st.spinner("正在進行歷史每日雙榜交集與 K 棒滾動回測運算中..."):
         try:
           all_trades = []
-          # 取最近歷史交易日進行逐日回測滾動
           test_days_pool = target_dates[-5:]
 
           for d_str in test_days_pool:
@@ -650,17 +649,32 @@ if market_dict:
                 total_s = market_dict[code]["發行總股數"]
                 ratio = (f_shares / total_s) * 100
                 if ratio > 0:
-                  day_records.append({"代號": code, "外本比": ratio})
+                  day_records.append({
+                      "代號": code,
+                      "外本比": ratio,
+                      "成交金額": market_dict[code]["總成交金額_元"],
+                  })
 
             if not day_records:
               continue
 
-            df_day = pd.DataFrame(day_records).sort_values(
+            df_day = pd.DataFrame(day_records)
+
+            df_wben = df_day.sort_values(by="外本比", ascending=False).head(50)
+            set_wben = set(df_wben["代號"])
+
+            df_vol = df_day.sort_values(by="成交金額", ascending=False).head(100)
+            set_vol = set(df_vol["代號"])
+
+            common_codes = set_wben.intersection(set_vol)
+            if not common_codes:
+              continue
+
+            df_cross_day = df_wben[df_wben["代號"].isin(common_codes)].sort_values(
                 by="外本比", ascending=False
             )
-            top_selected = df_day.head(backtest_top_n)
 
-            for _, row_sel in top_selected.iterrows():
+            for _, row_sel in df_cross_day.iterrows():
               code = row_sel["代號"]
               w_ratio = row_sel["外本比"]
 
@@ -718,25 +732,25 @@ if market_dict:
             final_avg_ret = round(df_result["持有報酬率(%)"].mean(), 2)
 
             st.success(
-                f"🎯 嚴謹滾動回測完成！總共統計了 {total_t}"
+                f"🎯 雙榜交集嚴謹回測完成！共統計了 {total_t}"
                 " 筆符合條件的歷史進場交易。"
             )
 
             mc1, mc2, mc3 = st.columns(3)
-            mc1.metric("🔥 滾動策略勝率", f"{final_win_rate}%")
+            mc1.metric("🔥 雙榜策略勝率", f"{final_win_rate}%")
             mc2.metric("📊 平均單筆報酬率", f"{final_avg_ret:+.2f}%")
             mc3.metric("📋 總回測交易筆數", f"{total_t} 筆")
 
-            st.markdown("#### 📋 逐日滾動回測明細")
+            st.markdown("#### 📋 雙榜交集逐日回測明細")
             st.dataframe(df_result, use_container_width=True, hide_index=True)
           else:
             st.warning(
-                "在嚴謹的歷史逐日比對與多空均價線濾網下，無符合條件的樣本，"
-                "請嘗試取消均價線濾網或調整參數。"
+                "在雙榜交集嚴謹條件與多空均價線濾網下，無符合條件的樣本，"
+                "請嘗試取消均價線濾網。"
             )
 
         except Exception as e:
-          st.error(f"執行嚴謹回測時發生錯誤: {e}")
+          st.error(f"執行雙榜交集回測時發生錯誤: {e}")
 
   else:
     st.warning("無法解析出市場與外資買超資料。")

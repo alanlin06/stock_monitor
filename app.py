@@ -21,9 +21,12 @@ def fetch_twse_data():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-    curr = datetime.now()
+
+    # 優化點：如果當天是半夜或盤前，避免直接抓今天導致空資料，改從昨天開始往前找最近 5 個交易日
+    curr = datetime.now() - timedelta(days=1)
     dates = []
-    while len(dates) < 5 and (datetime.now() - curr).days < 20:
+
+    while len(dates) < 5 and (datetime.now() - curr).days < 30:
         if curr.weekday() < 5:
             d_str = curr.strftime("%Y%m%d")
             test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
@@ -40,7 +43,7 @@ def fetch_twse_data():
         curr -= timedelta(days=1)
 
     if not dates:
-        return {}, {}, [], ""
+        return {}, {}, [], "", None
 
     latest_date = dates[0]
 
@@ -69,7 +72,6 @@ def fetch_twse_data():
                                 )
                                 close_price = float(row[7].replace(",", ""))
 
-                                # 漲跌符號判斷 (如 row[8] 有包含漲跌符號或直接抓 row[9] 數值)
                                 change_sign = (
                                     row[8].strip() if len(row) > 8 else ""
                                 )
@@ -93,7 +95,6 @@ def fetch_twse_data():
                                 ):
                                     change_val = abs(raw_change_val)
                                 else:
-                                    # 如果符號欄位沒抓到，預設依數值正負或直接採用
                                     change_val = raw_change_val
 
                                 change_pct = (
@@ -263,17 +264,17 @@ if market_dict:
             lambda row: f"{row['官方名稱']} ({get_k_symbol(row)})", axis=1
         )
 
-        # 4. 精準對應你截圖中的十大權值股固定清單與正確代號
+        # 4. 十大權值股對應清單
         fixed_top10 = [
             {"排名": 1, "股票": "台積電", "代號": "2330"},
             {"排名": 2, "股票": "聯發科", "代號": "2454"},
             {"排名": 3, "股票": "台達電", "代號": "2308"},
             {"排名": 4, "股票": "鴻海", "代號": "2317"},
             {"排名": 5, "股票": "日月光投控", "代號": "3711"},
-            {"排名": 6, "股票": "富邦金", "代號": "2881"},  # 證交所正確代號
-            {"排名": 7, "股票": "台光電", "代號": "2383"},  # 證交所正確代號
-            {"排名": 8, "股票": "聯電", "代號": "2303"},  # 證交所正確代號
-            {"排名": 9, "股票": "國泰金", "代號": "2882"},  # 證交所正確代號
+            {"排名": 6, "股票": "富邦金", "代號": "2881"},
+            {"排名": 7, "股票": "台光電", "代號": "2383"},
+            {"排名": 8, "股票": "聯電", "代號": "2303"},
+            {"排名": 9, "股票": "國泰金", "代號": "2882"},
             {"排名": 10, "股票": "欣興", "代號": "3037"},
         ]
 
@@ -294,7 +295,6 @@ if market_dict:
                 close_p = m_data["收盤價"]
                 change_amt = m_data["漲跌金額"]
 
-                # 每漲1元影響點數公式：權重佔比換算或對應試算表邏輯
                 impact_per_dollar = (
                     weight_pct / 100 * 22000 / close_p
                     if close_p > 0

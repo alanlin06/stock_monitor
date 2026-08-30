@@ -273,7 +273,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 四大排行榜（內嵌表格選取，修正 yfinance 原始報價參數）
+        # 四大排行榜（內嵌表格選取，調整 K 棒顏色為台股紅漲綠跌）
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -312,7 +312,6 @@ if market_dict:
                 
                 with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與多空成本線..."):
                     try:
-                        # 加上 auto_adjust=False 確保抓取真實未還原價格，與看盤軟體一致
                         df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, auto_adjust=False, progress=False)
                         if df_stock.empty:
                             df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, auto_adjust=False, progress=False)
@@ -329,10 +328,21 @@ if market_dict:
                             df_stock['Cost_Line'] = df_stock['Mid_Price'].rolling(window=window_size).mean()
                             
                             fig = go.Figure()
+                            
+                            # 設定台股習慣：上漲紅、下跌綠
                             fig.add_trace(go.Candlestick(
-                                x=df_stock.index, open=df_stock['Open'], high=df_stock['High'],
-                                low=df_stock['Low'], close=df_stock['Close'], name=f'{k_period_type}線'
+                                x=df_stock.index, 
+                                open=df_stock['Open'], 
+                                high=df_stock['High'],
+                                low=df_stock['Low'], 
+                                close=df_stock['Close'], 
+                                name=f'{k_period_type}線',
+                                increasing_line_color='red',   # 上漲邊框紅
+                                increasing_fill_color='red',   # 上漲實體紅
+                                decreasing_line_color='green', # 下跌邊框綠
+                                decreasing_fill_color='green'  # 下跌實體綠
                             ))
+                            
                             fig.add_trace(go.Scatter(
                                 x=df_stock.index, y=df_stock['Cost_Line'], mode='lines', 
                                 name=f'多空成本線 ({window_size}期)', line=dict(color='orange', width=2)

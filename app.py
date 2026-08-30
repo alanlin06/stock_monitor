@@ -190,7 +190,6 @@ st.markdown("### 📈 前十大權值股與加權指數影響點數即時看板"
 
 @st.cache_data(ttl=600)
 def fetch_top10_impact():
-    # 依照您試算表中的前十大權值股清單與權重資料
     top10_config = [
         {"排名": 1, "股票": "台積電", "代號": "2330", "權重": 44.77},
         {"排名": 2, "股票": "聯發科", "代號": "2454", "權重": 4.05},
@@ -227,9 +226,6 @@ def fetch_top10_impact():
                     close_p = round(c_close, 2)
                     price_diff = round(c_close - p_close, 2)
             
-            # 簡易估算每漲1元影響點數與影響點數 (依據權重與現價比例動態對齊)
-            # 實際影響點數約為：漲跌價差 × (權重對應比例估算) 或採用您試算表的概算邏輯
-            # 這裡以當日漲跌價差乘上權重換算影響點數示範
             estimated_impact = round(price_diff * (weight / 10.0), 2)
             total_impact += estimated_impact
 
@@ -345,18 +341,19 @@ if market_dict:
         c1.metric("📊 Top 50 總買超金額", f"{total_foreign_amount} 億")
         c2.metric("🎯 監控標的檔數", f"{len(df_top50)} 檔")
         c3.metric("🔥 全市場外本比最高", f"{most_concentrated['官方名稱']} ({most_concentrated['代號']})", f"外本比 {most_concentrated['外本比(%)']}%")
-        c4.metric("💰 砸錢最多之冠", f"{top_amount_stock['官方名稱']} ({top_amount_stock['代號']})", f"+{top_amount_stock['外資買超金額(億)']} 億")
+        c4.metric("💰 砸錢最多之冠", f"{top_amount_stock['官方名稱']} ({top_amount_stock['代號']})", f"+{top_amount_stock['外資買超金額(億, dtype: float)}']} 億" if False else f"+{top_amount_stock['外資買超金額(億)']} 億")
 
         st.markdown("---")
 
         # ====================================================
-        # 四大排行榜
+        # 四大排行榜 + 交叉比對分頁
         # ====================================================
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "🔥 外資買超 Top 50", 
             "🔥 當日外本比 Top 50", 
             "⏳ 連續買超 Top 50 (外本比優先)", 
-            "🏆 全市場成交值 Top 100 (含外本比)"
+            "🏆 全市場成交值 Top 100 (含外本比)",
+            "🔗 雙榜交叉比對 (外本比 ∩ 成交值)"
         ])
 
         def render_chart_section(df_source, tab_name):
@@ -463,6 +460,28 @@ if market_dict:
                 "外本比(%)", "收盤價", "漲跌幅(%)", "總成交金額_元"
             ]]
             render_chart_section(export_df4, "全市場成交值 Top 100")
+
+        # TAB 5: 雙榜交叉比對 (外本比 Top 50 ∩ 成交值 Top 100)
+        with tab5:
+            st.subheader("🔗 雙榜交叉比對：外本比 Top 50 ∩ 成交值 Top 100")
+            st.caption("💡 此處自動篩選**同時名列**「當日外本比 Top 50」與「全市場成交值 Top 100」的雙榜強勢個股，並依外本比由高到低排序！")
+
+            set_wben = set(df_wben50["代號"])
+            set_vol = set(df_vol100["代號"])
+            common_codes = set_wben.intersection(set_vol)
+
+            df_cross = df_all[df_all["代號"].isin(common_codes)].sort_values(by="外本比(%)", ascending=False).copy()
+            df_cross.insert(0, "交叉排行", range(1, len(df_cross) + 1))
+            
+            if "成交金額(億)" not in df_cross.columns:
+                df_cross["成交金額(億)"] = round(df_cross["總成交金額_元"] / 1e8, 2)
+
+            export_df5 = df_cross[[
+                "交叉排行", "代號", "官方名稱", "外本比(%)", 
+                "外資買賣超張數", "成交金額(億)", 
+                "收盤價", "漲跌幅(%)", "連續買超天數"
+            ]]
+            render_chart_section(export_df5, "雙榜交叉比對")
 
     else:
         st.warning("無法解析出市場與外資買超資料。")

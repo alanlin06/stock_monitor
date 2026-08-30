@@ -273,7 +273,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 四大排行榜（內嵌表格選取，調整 K 棒顏色為台股紅漲綠跌）
+        # 四大排行榜（內嵌表格選取，修正 K 棒顏色參數）
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -329,7 +329,7 @@ if market_dict:
                             
                             fig = go.Figure()
                             
-                            # 設定台股習慣：上漲紅、下跌綠
+                            # 正確修正 Plotly Candlestick 顏色參數
                             fig.add_trace(go.Candlestick(
                                 x=df_stock.index, 
                                 open=df_stock['Open'], 
@@ -337,10 +337,8 @@ if market_dict:
                                 low=df_stock['Low'], 
                                 close=df_stock['Close'], 
                                 name=f'{k_period_type}線',
-                                increasing_line_color='red',   # 上漲邊框紅
-                                increasing_fill_color='red',   # 上漲實體紅
-                                decreasing_line_color='green', # 下跌邊框綠
-                                decreasing_fill_color='green'  # 下跌實體綠
+                                increasing=dict(line=dict(color='red'), fillcolor='red'),
+                                decreasing=dict(line=dict(color='green'), fillcolor='green')
                             ))
                             
                             fig.add_trace(go.Scatter(

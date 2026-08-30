@@ -50,7 +50,7 @@ with st.sidebar:
         💡 **指標說明**：
         - **外本比 (%)**：(外資買超股數 ÷ 官方發行總股數) × 100%。全排行榜同步納入計算。
         - **外資買超金額**：買超張數 × 平均價格 (VWAP) × 1000。
-        - **振幅均價線**：每根K棒 (最高價 + 最低價) / 2 的 20 期滾動平均價格，作為單一多空成本參考線。
+        - **多空成本均價線**：每根 K 棒 (最高價 + 最低價) / 2 之滾動平均價格（日K取20期、週K取10期），作為真實多空成本參考線。
         """
     )
 
@@ -273,7 +273,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 四大排行榜（內嵌表格選取，改用「單一振幅平均價格線」）
+        # 四大排行榜（內嵌表格選取，修正 yfinance 原始報價參數）
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -284,7 +284,7 @@ if market_dict:
 
         def render_chart_section(df_source, tab_name):
             st.subheader(f"📋 {tab_name} 全部標的清單")
-            st.caption("💡 提示：點擊下方表格任一列，即可直接在下方載入該標的的日K/週K走勢圖（含單一多空成本線）！")
+            st.caption("💡 提示：點擊下方表格任一列，即可直接在下方載入該標的的日K/週K走勢圖！")
 
             event = st.dataframe(
                 df_source,
@@ -312,17 +312,21 @@ if market_dict:
                 
                 with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與多空成本線..."):
                     try:
-                        df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, progress=False)
+                        # 加上 auto_adjust=False 確保抓取真實未還原價格，與看盤軟體一致
+                        df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, auto_adjust=False, progress=False)
                         if df_stock.empty:
-                            df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, progress=False)
+                            df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, auto_adjust=False, progress=False)
                             
                         if not df_stock.empty:
                             if isinstance(df_stock.columns, pd.MultiIndex):
                                 df_stock.columns = df_stock.columns.get_level_values(0)
                             
-                            # 計算每根K棒高低中間價，並取 20 期滾動平均作為單一多空成本線
+                            # 計算每根K棒高低中間價
                             df_stock['Mid_Price'] = (df_stock['High'] + df_stock['Low']) / 2
-                            df_stock['Cost_Line'] = df_stock['Mid_Price'].rolling(window=20).mean()
+                            
+                            # 日K用 20 期，週K改用 10 期
+                            window_size = 10 if "週K" in k_period_type else 20
+                            df_stock['Cost_Line'] = df_stock['Mid_Price'].rolling(window=window_size).mean()
                             
                             fig = go.Figure()
                             fig.add_trace(go.Candlestick(
@@ -331,7 +335,7 @@ if market_dict:
                             ))
                             fig.add_trace(go.Scatter(
                                 x=df_stock.index, y=df_stock['Cost_Line'], mode='lines', 
-                                name='多空成本均價線', line=dict(color='orange', width=2)
+                                name=f'多空成本線 ({window_size}期)', line=dict(color='orange', width=2)
                             ))
                             
                             fig.update_layout(

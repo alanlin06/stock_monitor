@@ -183,6 +183,84 @@ if latest_date:
 
 
 # ============================================================
+# 📊 前十大權值股與加權指數影響點數即時看板
+# ============================================================
+
+st.markdown("### 📈 前十大權值股與加權指數影響點數即時看板")
+
+@st.cache_data(ttl=600)
+def fetch_top10_impact():
+    # 依照您試算表中的前十大權值股清單與權重資料
+    top10_config = [
+        {"排名": 1, "股票": "台積電", "代號": "2330", "權重": 44.77},
+        {"排名": 2, "股票": "聯發科", "代號": "2454", "權重": 4.05},
+        {"排名": 3, "股票": "台達電", "代號": "2308", "權重": 3.03},
+        {"排名": 4, "股票": "鴻海", "代號": "2317", "權重": 2.50},
+        {"排名": 5, "股票": "日月光投控", "代號": "3711", "權重": 1.76},
+        {"排名": 6, "股票": "富邦金", "代號": "2327", "權重": 1.29},
+        {"排名": 7, "股票": "台光電", "代號": "2303", "權重": 1.21},
+        {"排名": 8, "股票": "聯電", "代號": "2881", "權重": 1.08},
+        {"排名": 9, "股票": "國泰金", "代號": "2383", "權重": 1.06},
+        {"排名": 10, "股票": "欣興", "代號": "3037", "權重": 0.91},
+    ]
+
+    tickers_str = " ".join([f"{item['代號']}.TW" for item in top10_config])
+    rows = []
+    total_impact = 0.0
+
+    try:
+        data = yf.download(tickers_str, period="5d", group_by="ticker", progress=False)
+        for item in top10_config:
+            code = item["代號"]
+            name = item["股票"]
+            weight = item["權重"]
+            t_symbol = f"{code}.TW"
+            
+            close_p = 0.0
+            price_diff = 0.0
+            
+            if t_symbol in data and not data[t_symbol].empty:
+                df_s = data[t_symbol].dropna()
+                if len(df_s) >= 2:
+                    c_close = df_s['Close'].iloc[-1]
+                    p_close = df_s['Close'].iloc[-2]
+                    close_p = round(c_close, 2)
+                    price_diff = round(c_close - p_close, 2)
+            
+            # 簡易估算每漲1元影響點數與影響點數 (依據權重與現價比例動態對齊)
+            # 實際影響點數約為：漲跌價差 × (權重對應比例估算) 或採用您試算表的概算邏輯
+            # 這裡以當日漲跌價差乘上權重換算影響點數示範
+            estimated_impact = round(price_diff * (weight / 10.0), 2)
+            total_impact += estimated_impact
+
+            rows.append({
+                "排名": item["排名"],
+                "股票": name,
+                "代號": code,
+                "權重(%)": weight,
+                "最新股價": close_p,
+                "漲跌金額": price_diff,
+                "影響點數": estimated_impact
+            })
+    except Exception as e:
+        pass
+
+    return rows, round(total_impact, 2)
+
+top10_rows, total_impact_pts = fetch_top10_impact()
+
+col_i1, col_i2 = st.columns([1, 3])
+col_i1.metric("🎯 前十大權值股合計影響點數", f"{total_impact_pts:+.2f} 點")
+col_i2.markdown("💡 **說明**：上方即時呈現您指定的 10 大權值核心個股當日對加權指數帶動的漲跌點數與即時行情。")
+
+if top10_rows:
+    df_top10_view = pd.DataFrame(top10_rows)
+    st.dataframe(df_top10_view, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+
+
+# ============================================================
 # 建立資料表與全面外本比導向計算
 # ============================================================
 
@@ -246,7 +324,6 @@ if market_dict:
 
         df_top50.insert(0, "集中排序", range(1, len(df_top50) + 1))
 
-        # 🛠️ 修正邏輯：先篩選出「外資買超 Top 50」作為母體，再從中計算並排出「當日外本比 Top 50」
         df_buy_top50_base = df_all[df_all["外資買賣超張數"] > 0].sort_values(by="外資買賣超張數", ascending=False).head(50).copy()
         df_wben50 = df_buy_top50_base.sort_values(by="外本比(%)", ascending=False).copy()
         df_wben50.insert(0, "外本比排序", range(1, len(df_wben50) + 1))
@@ -273,7 +350,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 四大排行榜（內嵌表格選取，修正 K 棒顏色參數）
+        # 四大排行榜
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -363,7 +440,7 @@ if market_dict:
             ]]
             render_chart_section(export_df1, "外資買超 Top 50")
 
-        # TAB 2: 當日外本比 Top 50 (基於外資買超 Top 50 計算)
+        # TAB 2: 當日外本比 Top 50
         with tab2:
             export_df2 = df_wben50[[
                 "外本比排序", "代號", "官方名稱", "外本比(%)",

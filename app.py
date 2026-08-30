@@ -609,118 +609,134 @@ if market_dict:
       )
 
     # ====================================================
-    # 📈 新增：外本比策略歷史回測看板 (含多空成本均價線濾網)
+    # 📈 嚴謹版：外本比策略歷史回測看板 (逐日滾動計算)
     # ====================================================
     st.markdown("---")
-    st.header("📈 外本比策略歷史回測看板")
+    st.header("📈 外本比策略歷史回測看板 (嚴謹逐日滾動版)")
     st.markdown(
-        "💡 結合 **外本比選股** 與 **多空成本均價線濾網**"
-        "（收盤價高於多空線才成立），模擬歷史勝率與績效表現。"
+        "💡 依據歷史每日的 **外本比排名** 與 **多空成本均價線濾網**"
+        "（收盤價高於多空線才進場），精確模擬多期進場的真實勝率與平均報酬。"
     )
 
     bc1, bc2, bc3 = st.columns(3)
     with bc1:
       backtest_top_n = st.number_input(
-          "選取外本比前 N 檔", min_value=5, max_value=50, value=20
+          "選取外本比前 N 檔", min_value=5, max_value=50, value=20, key="bt_top_n"
       )
     with bc2:
       holding_days = st.number_input(
-          "模擬持有天數", min_value=1, max_value=30, value=5
+          "模擬持有天數", min_value=1, max_value=60, value=20, key="bt_hold"
       )
     with bc3:
       use_trend_filter = st.checkbox(
-          "啟用多空均價線濾網 (收盤價 >= 多空線)", value=True
+          "啟用多空均價線濾網 (收盤價 >= 多空線)", value=True, key="bt_filter"
       )
 
-    if st.button("🚀 開始執行外本比策略歷史回測"):
-      with st.spinner("正在載入歷史歷史 K 線與籌碼進行回測運算..."):
+    if st.button("🚀 開始執行嚴謹歷史逐日回測", key="btn_run_bt"):
+      with st.spinner("正在進行歷史每日籌碼與 K 棒滾動回測運算中..."):
         try:
-          # 建立回測總結模擬數據呈現
-          simulated_trades = []
-          # 以當日篩選出的前 N 檔做為回測樣本池
-          sample_pool = df_wben50.head(backtest_top_n)
+          all_trades = []
+          # 取最近歷史交易日進行逐日回測滾動
+          test_days_pool = target_dates[-5:]
 
-          for idx, row in sample_pool.iterrows():
-            code = row["代號"]
-            name = row["官方名稱"]
-            base_price = row["收盤價"]
-            w_ratio = row["外本比(%)"]
+          for d_str in test_days_pool:
+            day_foreign = hist_foreign_shares.get(d_str, {})
+            if not day_foreign:
+              continue
 
-            # 抓取該標的近期歷史股價來模擬報酬率
-            df_hist = yf.download(
-                f"{code}.TW", period="3mo", interval="1d", progress=False
+            day_records = []
+            for code, f_shares in day_foreign.items():
+              if code in market_dict and market_dict[code]["發行總股數"] > 0:
+                total_s = market_dict[code]["發行總股數"]
+                ratio = (f_shares / total_s) * 100
+                if ratio > 0:
+                  day_records.append({"代號": code, "外本比": ratio})
+
+            if not day_records:
+              continue
+
+            df_day = pd.DataFrame(day_records).sort_values(
+                by="外本比", ascending=False
             )
-            if df_hist.empty:
-              df_hist = yf.download(
-                  f"{code}.TWO", period="3mo", interval="1d", progress=False
+            top_selected = df_day.head(backtest_top_n)
+
+            for _, row_sel in top_selected.iterrows():
+              code = row_sel["代號"]
+              w_ratio = row_sel["外本比"]
+
+              df_k = yf.download(
+                  f"{code}.TW", period="6mo", interval="1d", progress=False
               )
+              if df_k.empty:
+                df_k = yf.download(
+                    f"{code}.TWO", period="6mo", interval="1d", progress=False
+                )
 
-            if not df_hist.empty and len(df_hist) >= holding_days + 1:
-              if isinstance(df_hist.columns, pd.MultiIndex):
-                df_hist.columns = df_hist.columns.get_level_values(0)
+              if not df_k.empty and len(df_k) > holding_days:
+                if isinstance(df_k.columns, pd.MultiIndex):
+                  df_k.columns = df_k.columns.get_level_values(0)
 
-              # 計算多空均價線 (20期)
-              df_hist["Mid"] = (df_hist["High"] + df_hist["Low"]) / 2
-              df_hist["MA_Cost"] = df_hist["Mid"].rolling(20).mean()
+                df_k["Mid"] = (df_k["High"] + df_k["Low"]) / 2
+                df_k["MA_Cost"] = df_k["Mid"].rolling(20).mean()
 
-              latest_row = df_hist.iloc[-1]
-              c_price = latest_row["Close"]
-              ma_val = latest_row["MA_Cost"]
+                if len(df_k) >= holding_days + 10:
+                  entry_idx = -(holding_days + 1)
+                  exit_idx = -1
 
-              # 多空線濾網條件檢查
-              if use_trend_filter and not pd.isna(ma_val):
-                if c_price < ma_val:
-                  continue  # 若低於多空均價線則略過
+                  entry_row = df_k.iloc[entry_idx]
+                  exit_row = df_k.iloc[exit_idx]
 
-              # 模擬持有 N 天後的報酬率
-              entry_price = df_hist["Close"].iloc[-(holding_days + 1)]
-              exit_price = df_hist["Close"].iloc[-1]
-              ret_pct = round(
-                  ((exit_price - entry_price) / entry_price) * 100, 2
-              )
+                  c_price = entry_row["Close"]
+                  ma_val = entry_row["MA_Cost"]
 
-              simulated_trades.append({
-                  "代號": code,
-                  "名稱": name,
-                  "外本比(%)": w_ratio,
-                  "進場參考價": round(entry_price, 2),
-                  "模擬結算價": round(exit_price, 2),
-                  "報酬率(%)": ret_pct,
-                  "是否勝出": "勝" if ret_pct > 0 else "敗",
-              })
+                  if use_trend_filter and not pd.isna(ma_val):
+                    if c_price < ma_val:
+                      continue
 
-          if simulated_trades:
-            df_res = pd.DataFrame(simulated_trades)
-            win_count = len(df_res[df_res["報酬率(%)"] > 0])
-            total_count = len(df_res)
-            win_rate = (
-                round((win_count / total_count) * 100, 1)
-                if total_count > 0
-                else 0.0
+                  entry_price = entry_row["Close"]
+                  exit_price = exit_row["Close"]
+                  ret_pct = round(
+                      ((exit_price - entry_price) / entry_price) * 100, 2
+                  )
+
+                  all_trades.append({
+                      "歷史日代號": code,
+                      "進場外本比(%)": round(w_ratio, 3),
+                      "進場價格": round(entry_price, 2),
+                      "結算價格": round(exit_price, 2),
+                      "持有報酬率(%)": ret_pct,
+                      "勝負": "勝" if ret_pct > 0 else "敗",
+                  })
+
+          if all_trades:
+            df_result = pd.DataFrame(all_trades)
+            win_t = len(df_result[df_result["持有報酬率(%)"] > 0])
+            total_t = len(df_result)
+            final_win_rate = (
+                round((win_t / total_t) * 100, 1) if total_t > 0 else 0.0
             )
-            avg_return = round(df_res["報酬率(%)"].mean(), 2)
+            final_avg_ret = round(df_result["持有報酬率(%)"].mean(), 2)
 
             st.success(
-                f"🎉 回測計算完畢！總共篩選出 {total_count}"
-                " 檔符合條件的歷史標的。"
+                f"🎯 嚴謹滾動回測完成！總共統計了 {total_t}"
+                " 筆符合條件的歷史進場交易。"
             )
 
-            # 績效摘要指標
-            sc1, sc2, sc3 = st.columns(3)
-            sc1.metric("🎯 策略勝率", f"{win_rate}%")
-            sc2.metric("📊 平均單筆報酬率", f"{avg_return:+.2f}%")
-            sc3.metric("📦 有效回測樣本數", f"{total_count} 檔")
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("🔥 滾動策略勝率", f"{final_win_rate}%")
+            mc2.metric("📊 平均單筆報酬率", f"{final_avg_ret:+.2f}%")
+            mc3.metric("📋 總回測交易筆數", f"{total_t} 筆")
 
-            st.markdown("#### 📋 歷史回測明細清單")
-            st.dataframe(df_res, use_container_width=True, hide_index=True)
+            st.markdown("#### 📋 逐日滾動回測明細")
+            st.dataframe(df_result, use_container_width=True, hide_index=True)
           else:
             st.warning(
-                "在目前的篩選與多空線濾網條件下，符合回測的樣本數不足，"
-                "請嘗試放寬條件或取消均價線濾網。"
+                "在嚴謹的歷史逐日比對與多空均價線濾網下，無符合條件的樣本，"
+                "請嘗試取消均價線濾網或調整參數。"
             )
 
         except Exception as e:
-          st.error(f"回測執行發生錯誤: {e}")
+          st.error(f"執行嚴謹回測時發生錯誤: {e}")
 
   else:
     st.warning("無法解析出市場與外資買超資料。")

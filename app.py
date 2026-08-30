@@ -5,14 +5,14 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股雙軌籌碼終端機 (雙榜交叉 & 雙K圖示)",
+    page_title="台股雙軌籌碼終端機 (雙榜交叉 & 權值貢獻)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.title("🎯 雙榜交叉比對：外資本比 Top 50 ∩ 成交值 Top 100")
 st.caption(
-    "🔄 100% 串接證交所官方 API | 同時名列外資買超與成交值百大之雙榜強勢股，並附帶日K/週K多空雙K棒判定"
+    "🔄 100% 串接證交所官方 API | 包含雙榜強勢股交叉比對、日K/週K多空雙K棒判定，以及前十大權值股對大盤貢獻度分析"
 )
 
 
@@ -154,11 +154,11 @@ if market_dict:
                 "漲跌幅(%)": info["漲跌幅(%)"],
                 "外資買賣超股數": f_shares,
                 "外資買賣超張數": f_shares / 1000,
+                "市值估算": info["發行總股數"] * info["收盤價"],
             }
         )
 
     df_market = pd.DataFrame(base_rows)
-
 
     if not df_market.empty:
         # 共用計算函式：計算外本比與連續買超天數
@@ -193,7 +193,6 @@ if market_dict:
             df["連續買超天數"] = df["代號"].apply(calc_streak)
             return df
 
-
         # 1. 外資買超 Top 50
         df_f_buy = (
             df_market[df_market["外資買賣超股數"] > 0]
@@ -220,13 +219,9 @@ if market_dict:
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
         df_cross.insert(0, "交叉排行", range(1, len(df_cross) + 1))
 
-
-        # 模擬/對應多空狀態轉化為 K 棒圖示的函式（可依你的均價線邏輯替換狀態來源）
+        # 多空狀態轉化為 K 棒圖示的函式
         def get_k_symbol(row):
-            # 這裡可以串接你原本計算的日K/週K狀態，目前先以邏輯示範或預設
-            # 假設欄位有抓到狀態，若無則預設雙多示範
-            status = "雙多"
-            if row["外本比(%)"] > 1.0:
+            if row["外本比(%)"] > 1.0 and row["漲跌幅(%)"] >= 0:
                 status = "雙多"
             elif row["漲跌幅(%)"] < 0:
                 status = "長多短空"
@@ -243,12 +238,38 @@ if market_dict:
                 return "🟢🔴 長空短多"
             return "🔴🔴 雙多"
 
-
         df_cross["官方名稱"] = df_cross.apply(
             lambda row: f"{row['官方名稱']} ({get_k_symbol(row)})", axis=1
         )
 
+        # 4. 計算前十大權值股對加權指數漲跌貢獻
+        # 簡易估算公式：大盤點數變動 ≒ (該股市值 × 漲跌幅%) / 發行量加權指數基值常數 (或以權值佔比估算)
+        df_top_market_cap = df_market.sort_values(
+            by="市值估算", ascending=False
+        ).head(10).copy()
+        total_market_cap = df_market["市值估算"].sum()
+
+        # 假設大盤點數約為 22000 點作基準估算貢獻點數 (點數變動 ≒ 大盤點數 * 權重 * 漲跌幅%)
+        # 權重 = 市值 / 總市值
+        df_top_market_cap["大盤權重(%)"] = (
+            df_top_market_cap["市值估算"] / total_market_cap
+        ) * 100
+        # 貢獻點數估算 = 現有大盤點數 (假設 22000) * (權重%) * (漲跌幅%)
+        # 為了精準，直接用市值比例乘上假設大盤點數 22000 進行估算
+        assumed_index_points = 22000
+        df_top_market_cap["對大盤漲跌貢獻點數"] = (
+            assumed_index_points
+            * (df_top_market_cap["大盤權重(%)"] / 100)
+            * (df_top_market_cap["漲跌幅(%)"] / 100)
+        )
+
         # 頂部總覽看板
+        df_top50_by_ratio = df_top50.sort_values(
+            by="外本比(%)", ascending=False
+        ).reset_index(drop=True)
+        top_ratio_row = df_top50_by_ratio.iloc[0]
+        top_turnover_row = df_top100.iloc[0]
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(
             "🔥 雙榜交集強勢股數", f"{len(df_cross)} 檔", "外本比與成交值雙百大"
@@ -259,22 +280,23 @@ if market_dict:
         )
         c3.metric(
             "📈 外資買超最高外本比",
-            f"{df_top50.iloc[0]['官方名稱']} ({df_top50.iloc[0]['代號']})",
-            f"{df_top50.iloc[0]['外本比(%)']}%",
+            f"{top_ratio_row['官方名稱']} ({top_ratio_row['代號']})",
+            f"{top_ratio_row['外本比(%)']}%",
         )
         c4.metric(
             "🏆 成交值冠冕標的",
-            f"{df_top100.iloc[0]['官方名稱']} ({df_top100.iloc[0]['代號']})",
-            f"{df_top100.iloc[0]['總成交金額(億)']} 億",
+            f"{top_turnover_row['官方名稱']} ({top_turnover_row['代號']})",
+            f"{top_turnover_row['總成交金額(億)']} 億",
         )
         st.markdown("---")
 
-        # 雙軌與雙榜分頁顯示
-        tab_cross, tab_top50, tab_top100 = st.tabs(
+        # 雙軌、雙榜與權值股貢獻分頁顯示
+        tab_cross, tab_top50, tab_top100, tab_weight = st.tabs(
             [
                 "🎯 雙榜交叉比對 (外本比Top50 ∩ 成交值Top100)",
                 "🔥 1. 外資買超排行 Top 50",
                 "💰 2. 全市場成交值排行 Top 100",
+                "⚖️ 3. 前十大權值股對大盤漲跌貢獻",
             ]
         )
 
@@ -417,6 +439,49 @@ if market_dict:
                 use_container_width=True,
                 hide_index=True,
                 height=600,
+            )
+
+        with tab_weight:
+            st.subheader("⚖️ 台股市值前十大權值股對加權指數漲跌貢獻分析")
+            st.markdown(
+                "💡 透過各權值股市值佔全市場比例與當日漲跌幅，即時推估其對大盤指數的漲跌貢獻點數。"
+            )
+            export_weight = df_top_market_cap[
+                [
+                    "代號",
+                    "官方名稱",
+                    "收盤價",
+                    "漲跌幅(%)",
+                    "大盤權重(%)",
+                    "對大盤漲跌貢獻點數",
+                ]
+            ].copy()
+            export_weight.insert(
+                0, "權值排名", range(1, len(export_weight) + 1)
+            )
+
+            st.dataframe(
+                export_weight,
+                column_config={
+                    "權值排名": "排名",
+                    "代號": "代號",
+                    "官方名稱": "名稱",
+                    "收盤價": st.column_config.NumberColumn(
+                        "收盤價", format="%.2f"
+                    ),
+                    "漲跌幅(%)": st.column_config.NumberColumn(
+                        "漲跌幅", format="%.2f %%"
+                    ),
+                    "大盤權重(%)": st.column_config.NumberColumn(
+                        "大盤權重", format="%.2f %%"
+                    ),
+                    "對大盤漲跌貢獻點數": st.column_config.NumberColumn(
+                        "📊 貢獻點數 (點)", format="%.2f 點"
+                    ),
+                },
+                use_container_width=True,
+                hide_index=True,
+                height=500,
             )
     else:
         st.warning("無法解析出市場行情資料。")

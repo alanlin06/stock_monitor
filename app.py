@@ -188,7 +188,6 @@ if latest_date:
 if market_dict:
     combined_rows = []
 
-    # 確保市場清單中的每一檔標的都納入計算 (即使T86未列出也給0)
     for code, m_info in market_dict.items():
         f_shares = latest_foreign_shares.get(code, 0)
         combined_rows.append({
@@ -207,7 +206,6 @@ if market_dict:
 
     if not df_all.empty:
         
-        # 1. 計算連續買超天數
         def calc_streak(code):
             streak = 0
             for d_str in target_dates:
@@ -220,7 +218,6 @@ if market_dict:
 
         df_all["連續買超天數"] = df_all["代號"].apply(calc_streak)
         
-        # 2. 精準外本比計算 (%) (含負數/賣超或買超)
         df_all["外本比(%)"] = df_all.apply(
             lambda row: round((row["外資買賣超股數"] / row["發行總股數"]) * 100, 3) if row["發行總股數"] > 0 else 0.0,
             axis=1
@@ -233,7 +230,6 @@ if market_dict:
             axis=1
         )
 
-        # A. 外資買超 Top 50
         df_top50 = df_all[df_all["外資買賣超張數"] > 0].sort_values(by="外資買賣超張數", ascending=False).head(50).copy()
 
         if "外本比" in sort_option:
@@ -249,24 +245,20 @@ if market_dict:
 
         df_top50.insert(0, "集中排序", range(1, len(df_top50) + 1))
 
-        # B. 當日外本比排行 Top 50
         df_wben50 = df_all[df_all["外本比(%)"] > 0].sort_values(
             by=["外本比(%)", "外資買賣超張數"], ascending=[False, False]
         ).head(50).copy()
         df_wben50.insert(0, "外本比排序", range(1, len(df_wben50) + 1))
 
-        # C. 連續買超天數 Top 50
         df_streak50 = df_all[df_all["連續買超天數"] > 0].sort_values(
             by=["連續買超天數", "外本比(%)"], ascending=[False, False]
         ).head(50).copy()
         df_streak50.insert(0, "連買排序", range(1, len(df_streak50) + 1))
 
-        # D. 當日全市場成交值排行 Top 100 (已完整計算外本比)
         df_vol100 = df_all.sort_values(by="總成交金額_元", ascending=False).head(100).copy()
         df_vol100["成交金額(億)"] = round(df_vol100["總成交金額_元"] / 1e8, 2)
         df_vol100.insert(0, "成交值排序", range(1, len(df_vol100) + 1))
 
-        # 頂部看板
         total_foreign_amount = round(df_top50["外資買超金額(億)"].sum(), 2)
         most_concentrated = df_all.sort_values(by="外本比(%)", ascending=False).iloc[0]
         top_amount_stock = df_top50.sort_values(by="外資買超金額(億)", ascending=False).iloc[0]
@@ -280,22 +272,30 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 個股互動技術分析與 10/20 日均價走勢檢視
+        # 個股互動技術分析與 K線週期切換 (日K / 週K)
         # ====================================================
-        st.subheader("📈 個股技術分析與 10/20 日均價走勢檢視")
+        st.subheader("📈 個股技術分析與均價走勢檢視 (支援日K / 週K)")
         
-        all_stock_options = [f"{row['代號']} {row['官方名稱']}" for _, row in df_all.sort_values(by="代號").iterrows()]
-        selected_stock_str = st.selectbox("👉 請從下拉選單選擇（或輸入）想查看 10/20 日均價走勢的標的：", options=all_stock_options, index=0)
+        col_sel1, col_sel2 = st.columns([3, 1])
+        with col_sel1:
+            all_stock_options = [f"{row['代號']} {row['官方名稱']}" for _, row in df_all.sort_values(by="代號").iterrows()]
+            selected_stock_str = st.selectbox("👉 請從下拉選單選擇（或輸入）標的：", options=all_stock_options, index=0)
+        with col_sel2:
+            k_period_type = st.selectbox("⏱️ 選擇 K 線週期：", options=["日K (近6個月)", "週K (近1年)"], index=0)
         
         if selected_stock_str:
             target_code = selected_stock_str.split(" ")[0]
             target_name = selected_stock_str.split(" ")[1]
             
-            with st.spinner(f"正在載入 {target_code} {target_name} 的歷史走勢與均價線..."):
+            # 根據選擇載入對應區間與頻率
+            yf_period = "1y" if "週K" in k_period_type else "6mo"
+            yf_interval = "1wk" if "週K" in k_period_type else "1d"
+            
+            with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與均價線..."):
                 try:
-                    df_stock = yf.download(f"{target_code}.TW", period="6mo", interval="1d", progress=False)
+                    df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, progress=False)
                     if df_stock.empty:
-                        df_stock = yf.download(f"{target_code}.TWO", period="6mo", interval="1d", progress=False)
+                        df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, progress=False)
                         
                     if not df_stock.empty:
                         if isinstance(df_stock.columns, pd.MultiIndex):
@@ -307,26 +307,26 @@ if market_dict:
                         fig = go.Figure()
                         fig.add_trace(go.Candlestick(
                             x=df_stock.index, open=df_stock['Open'], high=df_stock['High'],
-                            low=df_stock['Low'], close=df_stock['Close'], name='日K線'
+                            low=df_stock['Low'], close=df_stock['Close'], name=f'{k_period_type}線'
                         ))
                         fig.add_trace(go.Scatter(
                             x=df_stock.index, y=df_stock['MA10'], mode='lines', 
-                            name='10日均價線', line=dict(color='orange', width=1.5)
+                            name='10日/週均價線', line=dict(color='orange', width=1.5)
                         ))
                         fig.add_trace(go.Scatter(
                             x=df_stock.index, y=df_stock['MA20'], mode='lines', 
-                            name='20日均價線', line=dict(color='deepskyblue', width=1.5)
+                            name='20日/週均價線', line=dict(color='deepskyblue', width=1.5)
                         ))
                         
                         fig.update_layout(
-                            title=f"{target_code} {target_name} - 10/20日均價走勢圖 (可縮放/平移)",
+                            title=f"{target_code} {target_name} - {k_period_type}與均價走勢圖 (可縮放/平移)",
                             yaxis_title="股價 (TWD)", xaxis_title="日期",
                             template="plotly_dark", height=480,
                             margin=dict(l=10, r=10, t=40, b=10)
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning("查無此標的股價歷史資料。")
+                        st.warning("查無此標的歷史資料。")
                 except Exception as e:
                     st.error(f"載入發生錯誤: {e}")
 

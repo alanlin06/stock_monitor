@@ -272,68 +272,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 個股互動技術分析與 K線週期切換 (日K / 週K)
-        # ====================================================
-        st.subheader("📈 個股技術分析與均價走勢檢視 (支援日K / 週K)")
-        
-        col_sel1, col_sel2 = st.columns([3, 1])
-        with col_sel1:
-            all_stock_options = [f"{row['代號']} {row['官方名稱']}" for _, row in df_all.sort_values(by="代號").iterrows()]
-            selected_stock_str = st.selectbox("👉 請從下拉選單選擇（或輸入）標的：", options=all_stock_options, index=0)
-        with col_sel2:
-            k_period_type = st.selectbox("⏱️ 選擇 K 線週期：", options=["日K (近6個月)", "週K (近1年)"], index=0)
-        
-        if selected_stock_str:
-            target_code = selected_stock_str.split(" ")[0]
-            target_name = selected_stock_str.split(" ")[1]
-            
-            # 根據選擇載入對應區間與頻率
-            yf_period = "1y" if "週K" in k_period_type else "6mo"
-            yf_interval = "1wk" if "週K" in k_period_type else "1d"
-            
-            with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與均價線..."):
-                try:
-                    df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, progress=False)
-                    if df_stock.empty:
-                        df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, progress=False)
-                        
-                    if not df_stock.empty:
-                        if isinstance(df_stock.columns, pd.MultiIndex):
-                            df_stock.columns = df_stock.columns.get_level_values(0)
-                            
-                        df_stock['MA10'] = df_stock['Close'].rolling(window=10).mean()
-                        df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
-                        
-                        fig = go.Figure()
-                        fig.add_trace(go.Candlestick(
-                            x=df_stock.index, open=df_stock['Open'], high=df_stock['High'],
-                            low=df_stock['Low'], close=df_stock['Close'], name=f'{k_period_type}線'
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=df_stock.index, y=df_stock['MA10'], mode='lines', 
-                            name='10日/週均價線', line=dict(color='orange', width=1.5)
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=df_stock.index, y=df_stock['MA20'], mode='lines', 
-                            name='20日/週均價線', line=dict(color='deepskyblue', width=1.5)
-                        ))
-                        
-                        fig.update_layout(
-                            title=f"{target_code} {target_name} - {k_period_type}與均價走勢圖 (可縮放/平移)",
-                            yaxis_title="股價 (TWD)", xaxis_title="日期",
-                            template="plotly_dark", height=480,
-                            margin=dict(l=10, r=10, t=40, b=10)
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.warning("查無此標的歷史資料。")
-                except Exception as e:
-                    st.error(f"載入發生錯誤: {e}")
-
-        st.markdown("---")
-
-        # ====================================================
-        # 四大外本比與成交值專屬排行榜分頁
+        # 四大外本比與成交值專屬排行榜分頁（表格內嵌選取看走勢圖）
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -342,87 +281,107 @@ if market_dict:
             "🏆 全市場成交值 Top 100 (含外本比)"
         ])
 
+        # 共用的走勢圖繪製函式
+        def render_chart_section(df_source, tab_name):
+            st.subheader(f"📋 {tab_name} 全部標的清單")
+            st.caption("💡 提示：點擊下方表格任一列，即可直接在下方載入該標的的日K/週K走勢圖！")
+
+            # 讓表格支援列選取互動
+            event = st.dataframe(
+                df_source,
+                use_container_width=True, hide_index=True, height=450,
+                on_select="rerun", selection_mode="single-row"
+            )
+
+            selected_rows = event.selection.rows if hasattr(event, "selection") else []
+            
+            if selected_rows:
+                idx = selected_rows[0]
+                selected_row_data = df_source.iloc[idx]
+                target_code = str(selected_row_data["代號"])
+                target_name = str(selected_row_data["官方名稱"])
+                
+                st.markdown("---")
+                st.subheader(f"📈 互動技術分析走勢圖：{target_code} {target_name}")
+                
+                c_per1, c_per2 = st.columns([1, 3])
+                with c_per1:
+                    k_period_type = st.selectbox("⏱️ 選擇 K 線週期：", options=["日K (近6個月)", "週K (近1年)"], index=0, key=f"k_{tab_name}")
+                
+                yf_period = "1y" if "週K" in k_period_type else "6mo"
+                yf_interval = "1wk" if "週K" in k_period_type else "1d"
+                
+                with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與均價線..."):
+                    try:
+                        df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, progress=False)
+                        if df_stock.empty:
+                            df_stock = yf.download(f"{target_code}.TWO", period=yf_period, interval=yf_interval, progress=False)
+                            
+                        if not df_stock.empty:
+                            if isinstance(df_stock.columns, pd.MultiIndex):
+                                df_stock.columns = df_stock.columns.get_level_values(0)
+                                
+                            df_stock['MA10'] = df_stock['Close'].rolling(window=10).mean()
+                            df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
+                            
+                            fig = go.Figure()
+                            fig.add_trace(go.Candlestick(
+                                x=df_stock.index, open=df_stock['Open'], high=df_stock['High'],
+                                low=df_stock['Low'], close=df_stock['Close'], name=f'{k_period_type}線'
+                            ))
+                            fig.add_trace(go.Scatter(
+                                x=df_stock.index, y=df_stock['MA10'], mode='lines', 
+                                name='10日/週均價線', line=dict(color='orange', width=1.5)
+                            ))
+                            fig.add_trace(go.Scatter(
+                                x=df_stock.index, y=df_stock['MA20'], mode='lines', 
+                                name='20日/週均價線', line=dict(color='deepskyblue', width=1.5)
+                            ))
+                            
+                            fig.update_layout(
+                                title=f"{target_code} {target_name} - {k_period_type}與均價走勢圖 (可縮放/平移)",
+                                yaxis_title="股價 (TWD)", xaxis_title="日期",
+                                template="plotly_dark", height=480,
+                                margin=dict(l=10, r=10, t=40, b=10)
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("查無此標的歷史資料。")
+                    except Exception as e:
+                        st.error(f"載入發生錯誤: {e}")
+
         # TAB 1: 外資買超 Top 50
         with tab1:
-            st.subheader("📋 外資買超 Top 50 全部標的完整清單")
             export_df1 = df_top50[[
                 "集中排序", "代號", "官方名稱", "外資買賣超張數",
                 "成交均價", "外資買超金額(億)", "外本比(%)",
                 "買超金額佔成交值比(%)", "連續買超天數", "漲跌幅(%)"
             ]]
-            st.dataframe(
-                export_df1,
-                column_config={
-                    "集中排序": "排名", "代號": "代號", "官方名稱": "名稱",
-                    "外資買賣超張數": st.column_config.NumberColumn("📈 買超張數", format="%d 張"),
-                    "成交均價": st.column_config.NumberColumn("成交均價", format="%.2f"),
-                    "外資買超金額(億)": st.column_config.NumberColumn("💰 買超金額", format="%.2f 億"),
-                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比 (股數佔比)", format="%.3f %%"),
-                    "買超金額佔成交值比(%)": st.column_config.NumberColumn("🎯 買超佔成交值比", format="%.2f %%"),
-                    "連續買超天數": st.column_config.NumberColumn("連買天數", format="%d 天"),
-                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
-                },
-                use_container_width=True, hide_index=True, height=600
-            )
+            render_chart_section(export_df1, "外資買超 Top 50")
 
         # TAB 2: 當日外本比 Top 50
         with tab2:
-            st.subheader("🔥 當日外本比最高排行 Top 50")
             export_df2 = df_wben50[[
                 "外本比排序", "代號", "官方名稱", "外本比(%)",
                 "外資買賣超張數", "收盤價", "漲跌幅(%)"
             ]]
-            st.dataframe(
-                export_df2,
-                column_config={
-                    "外本比排序": "排名", "代號": "代號", "官方名稱": "名稱",
-                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比", format="%.3f %%"),
-                    "外資買賣超張數": st.column_config.NumberColumn("買賣超張數", format="%d 張"),
-                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
-                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
-                },
-                use_container_width=True, hide_index=True, height=600
-            )
+            render_chart_section(export_df2, "當日外本比 Top 50")
 
         # TAB 3: 連續買超 Top 50
         with tab3:
-            st.subheader("⏳ 連續買超天數最多排行 Top 50")
             export_df3 = df_streak50[[
                 "連買排序", "代號", "官方名稱", "連續買超天數",
                 "外本比(%)", "外資買賣超張數", "收盤價", "漲跌幅(%)"
             ]]
-            st.dataframe(
-                export_df3,
-                column_config={
-                    "連買排序": "排名", "代號": "代號", "官方名稱": "名稱",
-                    "連續買超天數": st.column_config.NumberColumn("⏳ 連買天數", format="%d 天"),
-                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比", format="%.3f %%"),
-                    "外資買賣超張數": st.column_config.NumberColumn("最新買超張數", format="%d 張"),
-                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
-                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%")
-                },
-                use_container_width=True, hide_index=True, height=600
-            )
+            render_chart_section(export_df3, "連續買超 Top 50")
 
-        # TAB 4: 全市場成交值 Top 100 (外本比已加入)
+        # TAB 4: 全市場成交值 Top 100
         with tab4:
-            st.subheader("🏆 全市場成交金額百大焦點排行 Top 100 (已納入外本比計算)")
             export_df4 = df_vol100[[
                 "成交值排序", "代號", "官方名稱", "成交金額(億)",
                 "外本比(%)", "收盤價", "漲跌幅(%)", "總成交金額_元"
             ]]
-            st.dataframe(
-                export_df4,
-                column_config={
-                    "成交值排序": "排名", "代號": "代號", "官方名稱": "名稱",
-                    "成交金額(億)": st.column_config.NumberColumn("💰 成交金額", format="%.2f 億"),
-                    "外本比(%)": st.column_config.NumberColumn("🔥 外本比 (股數佔比)", format="%.3f %%"),
-                    "收盤價": st.column_config.NumberColumn("收盤價", format="%.2f"),
-                    "漲跌幅(%)": st.column_config.NumberColumn("漲跌幅", format="%.2f %%"),
-                    "總成交金額_元": None
-                },
-                use_container_width=True, hide_index=True, height=600
-            )
+            render_chart_section(export_df4, "全市場成交值 Top 100")
 
     else:
         st.warning("無法解析出市場與外資買超資料。")

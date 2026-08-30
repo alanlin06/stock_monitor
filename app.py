@@ -7,14 +7,14 @@ import streamlit as st
 import yfinance as yf
 
 st.set_page_config(
-    page_title="台股雙軌籌碼終端機 (互動K線與多空線版)",
+    page_title="台股雙軌籌碼終端機 (互動K線與縮放版)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("⚡ 台股雙軌籌碼透視終端機 (外本比核心 + 互動 K 線多空線)")
+st.title("⚡ 台股雙軌籌碼透視終端機 (外本比核心 + 可縮放互動 K 線)")
 st.caption(
-    "🔄 100% 串接證交所官方資料 | 點擊下方表格任一標的立即檢視日/周 K 與多空平衡線"
+    "🔄 100% 串接證交所官方資料 | 支援滑鼠滾輪縮放、局部框選與多空平衡線"
 )
 
 
@@ -265,7 +265,6 @@ if market_dict:
 
         def render_interactive_table(df, key_name):
             export_df = df.copy()
-            # 呈現表格，開啟 row selection
             event = st.dataframe(
                 export_df,
                 use_container_width=True,
@@ -282,14 +281,16 @@ if market_dict:
             return None
 
         with tab_cross:
-            st.subheader("🎯 雙榜交集強勢清單 (點選下方任一列即可查看 K 線與多空線)")
+            st.subheader(
+                "🎯 雙榜交集強勢清單 (點選下方任一列即可查看可縮放 K 線與多空線)"
+            )
             sel1 = render_interactive_table(df_cross, "table_cross")
             if sel1:
                 selected_stock_code = sel1
 
         with tab_top50:
             st.subheader(
-                "📋 外資買超 Top 50 完整排行 (點選下方任一列即可查看 K 線與多空線)"
+                "📋 外資買超 Top 50 完整排行 (點選下方任一列即可查看可縮放 K 線與多空線)"
             )
             sel2 = render_interactive_table(df_top50, "table_top50")
             if sel2:
@@ -297,7 +298,7 @@ if market_dict:
 
         with tab_top100:
             st.subheader(
-                "📋 全市場成交值前 100 名股票 (點選下方任一列即可查看 K 線與多空線)"
+                "📋 全市場成交值前 100 名股票 (點選下方任一列即可查看可縮放 K 線與多空線)"
             )
             sel3 = render_interactive_table(df_top100, "table_top100")
             if sel3:
@@ -393,10 +394,19 @@ if market_dict:
                     yaxis_title="價格 (TWD)",
                     xaxis_rangeslider_visible=False,
                     template="plotly_dark",
-                    height=500,
+                    height=550,
                 )
 
-                st.plotly_chart(fig, use_container_width=True)
+                # 支援滑鼠滾輪縮放與完整互動工具列設定
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={
+                        "scrollZoom": True,
+                        "displayModeBar": True,
+                        "editable": False,
+                    },
+                )
             else:
                 st.warning(
                     f"無法取得代號 {selected_stock_code} 的歷史 K 線數據。"

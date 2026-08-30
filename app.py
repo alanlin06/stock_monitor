@@ -42,11 +42,10 @@ def fetch_twse_data():
         curr -= timedelta(days=1)
 
     if not dates:
-        return {}, {}, [], ""
+        return {}, {}, [], "", ""
 
     latest_date = dates[0]
 
-    # 直接透過 T86 取得最新交易日的完整個股籌碼與行情報價（免去容易失效的 MI_INDEX）
     market_dict = {}
     hist_foreign_shares = {}
     latest_foreign_shares = {}
@@ -64,23 +63,17 @@ def fetch_twse_data():
                     if len(code) == 4:
                         try:
                             name = r[1].strip()
-                            # T86 欄位說明：
-                            # r[2]: 證券名稱 (部分版本)
-                            # r[3]: 收盤價, r[4]: 漲跌, r[5]: 外資買賣超股數
-                            # 為了相容不同欄位對應，改用安全的抓法
                             close_p = float(r[2].replace(",", ""))
-                            # 判斷漲跌幅與買賣超
                             net_shares = int(r[4].replace(",", ""))
 
                             day_map[code] = net_shares
 
                             if i == 0:
                                 latest_foreign_shares[code] = net_shares
-                                # 估算或預設基本欄位
                                 market_dict[code] = {
                                     "官方名稱": name,
                                     "發行總股數": abs(net_shares) * 50
-                                    + 1e8,  // 確保分母有值
+                                    + 1e8,  # 確保分母有值
                                     "總成交金額_元": abs(net_shares)
                                     * close_p
                                     * 10,
@@ -90,7 +83,6 @@ def fetch_twse_data():
                                     "漲跌金額": 0.0,
                                 }
                         except:
-                            # 容錯處理不同欄位長度
                             try:
                                 code = r[0].strip()
                                 name = r[1].strip()
@@ -304,7 +296,6 @@ if market_dict:
         )
         st.markdown("---")
 
-        # 畫面佈局：分頁顯示雙榜
         tab_cross, tab_top50, tab_top100 = st.tabs(
             [
                 "🎯 雙榜交叉比對 (外本比Top50 ∩ 成交值Top100)",

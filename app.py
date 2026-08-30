@@ -7,14 +7,14 @@ import streamlit as st
 import yfinance as yf
 
 st.set_page_config(
-    page_title="台股雙軌籌碼終端機 (互動K線與縮放版)",
+    page_title="台股雙軌籌碼終端機 (自由平移與縮放版)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("⚡ 台股雙軌籌碼透視終端機 (外本比核心 + 可縮放互動 K 線)")
+st.title("⚡ 台股雙軌籌碼透視終端機 (外本比核心 + 可自由平移/縮放 K 線)")
 st.caption(
-    "🔄 100% 串接證交所官方資料 | 支援滑鼠滾輪縮放、局部框選與多空平衡線"
+    "🔄 100% 串接證交所官方資料 | 支援滑鼠滾輪縮放、自由拖曳平移與 20 日多空線"
 )
 
 
@@ -282,7 +282,7 @@ if market_dict:
 
         with tab_cross:
             st.subheader(
-                "🎯 雙榜交集強勢清單 (點選下方任一列即可查看可縮放 K 線與多空線)"
+                "🎯 雙榜交集強勢清單 (點選下方任一列即可查看 K 線與 20 日多空線)"
             )
             sel1 = render_interactive_table(df_cross, "table_cross")
             if sel1:
@@ -290,7 +290,7 @@ if market_dict:
 
         with tab_top50:
             st.subheader(
-                "📋 外資買超 Top 50 完整排行 (點選下方任一列即可查看可縮放 K 線與多空線)"
+                "📋 外資買超 Top 50 完整排行 (點選下方任一列即可查看 K 線與 20 日多空線)"
             )
             sel2 = render_interactive_table(df_top50, "table_top50")
             if sel2:
@@ -298,13 +298,13 @@ if market_dict:
 
         with tab_top100:
             st.subheader(
-                "📋 全市場成交值前 100 名股票 (點選下方任一列即可查看可縮放 K 線與多空線)"
+                "📋 全市場成交值前 100 名股票 (點選下方任一列即可查看 K 線與 20 日多空線)"
             )
             sel3 = render_interactive_table(df_top100, "table_top100")
             if sel3:
                 selected_stock_code = sel3
 
-        # ==================== 互動 K 線與多空線繪製區 ====================
+        # ==================== 互動 K 線與專業多空線繪製區 ====================
         if selected_stock_code:
             st.markdown("---")
             stock_info = df_market[df_market["代號"] == selected_stock_code]
@@ -335,8 +335,15 @@ if market_dict:
                 if isinstance(df_hist.columns, pd.MultiIndex):
                     df_hist.columns = df_hist.columns.droplevel(1)
 
-                # 計算多空平均線：(最高價 + 最低價) / 2
-                df_hist["HL_Avg"] = (df_hist["High"] + df_hist["Low"]) / 2
+                # 20日多空線計算方式：
+                # 1. 計算 HLC3 (最高、最低、收盤價平均)
+                df_hist["HLC3"] = (
+                    df_hist["High"] + df_hist["Low"] + df_hist["Close"]
+                ) / 3
+                # 2. 取 20 日移動平均作為中長期平滑多空平衡線
+                df_hist["Trend_Line"] = (
+                    df_hist["HLC3"].rolling(window=20).mean()
+                )
 
                 # 切換日 K 與周 K 顯示
                 chart_type = st.radio(
@@ -354,13 +361,13 @@ if market_dict:
                                 "Low": "min",
                                 "Close": "last",
                                 "Volume": "sum",
-                                "HL_Avg": "mean",
+                                "Trend_Line": "mean",
                             }
                         )
                         .dropna()
                     )
 
-                # 使用 Plotly 繪製紅綠 K 線與多空線
+                # 使用 Plotly 繪製紅綠 K 線與 20 日多空線
                 fig = go.Figure()
 
                 # 紅漲綠跌 K 線設定
@@ -377,24 +384,25 @@ if market_dict:
                     )
                 )
 
-                # 多空平均線 (高低價平均)
+                # 20日專業多空平衡線 (HLC3 MA20)
                 fig.add_trace(
                     go.Scatter(
                         x=plot_df.index,
-                        y=plot_df["HL_Avg"],
+                        y=plot_df["Trend_Line"],
                         mode="lines",
-                        name="多空平衡線 (高低價平均)",
-                        line=dict(color="#FFA15A", width=2),
+                        name="多空趨勢平衡線 (HLC3 MA20)",
+                        line=dict(color="#FFA15A", width=2.5),
                     )
                 )
 
                 fig.update_layout(
-                    title=f"{selected_stock_code} {stock_name} - {chart_type} 與多空線",
+                    title=f"{selected_stock_code} {stock_name} - {chart_type} 與 20日多空線",
                     xaxis_title="日期",
                     yaxis_title="價格 (TWD)",
                     xaxis_rangeslider_visible=False,
                     template="plotly_dark",
                     height=550,
+                    dragmode="pan",  # 讓滑鼠直接按住就能自由拖曳平移上下左右
                 )
 
                 # 支援滑鼠滾輪縮放與完整互動工具列設定

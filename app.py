@@ -246,9 +246,9 @@ if market_dict:
 
         df_top50.insert(0, "集中排序", range(1, len(df_top50) + 1))
 
-        df_wben50 = df_all[df_all["外本比(%)"] > 0].sort_values(
-            by=["外本比(%)", "外資買賣超張數"], ascending=[False, False]
-        ).head(50).copy()
+        # 🛠️ 修正邏輯：先篩選出「外資買超 Top 50」作為母體，再從中計算並排出「當日外本比 Top 50」
+        df_buy_top50_base = df_all[df_all["外資買賣超張數"] > 0].sort_values(by="外資買賣超張數", ascending=False).head(50).copy()
+        df_wben50 = df_buy_top50_base.sort_values(by="外本比(%)", ascending=False).copy()
         df_wben50.insert(0, "外本比排序", range(1, len(df_wben50) + 1))
 
         df_streak50 = df_all[df_all["連續買超天數"] > 0].sort_values(
@@ -320,16 +320,12 @@ if market_dict:
                             if isinstance(df_stock.columns, pd.MultiIndex):
                                 df_stock.columns = df_stock.columns.get_level_values(0)
                             
-                            # 計算每根K棒高低中間價
                             df_stock['Mid_Price'] = (df_stock['High'] + df_stock['Low']) / 2
-                            
-                            # 日K用 20 期，週K改用 10 期
                             window_size = 10 if "週K" in k_period_type else 20
                             df_stock['Cost_Line'] = df_stock['Mid_Price'].rolling(window=window_size).mean()
                             
                             fig = go.Figure()
                             
-                            # 正確修正 Plotly Candlestick 顏色參數
                             fig.add_trace(go.Candlestick(
                                 x=df_stock.index, 
                                 open=df_stock['Open'], 
@@ -367,7 +363,7 @@ if market_dict:
             ]]
             render_chart_section(export_df1, "外資買超 Top 50")
 
-        # TAB 2: 當日外本比 Top 50
+        # TAB 2: 當日外本比 Top 50 (基於外資買超 Top 50 計算)
         with tab2:
             export_df2 = df_wben50[[
                 "外本比排序", "代號", "官方名稱", "外本比(%)",

@@ -22,8 +22,8 @@ def fetch_twse_data():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    # 優化點：如果當天是半夜或盤前，避免直接抓今天導致空資料，改從昨天開始往前找最近 5 個交易日
-    curr = datetime.now() - timedelta(days=1)
+    # 自動往前追溯最近 5 個有資料的交易日
+    curr = datetime.now()
     dates = []
 
     while len(dates) < 5 and (datetime.now() - curr).days < 30:
@@ -31,7 +31,7 @@ def fetch_twse_data():
             d_str = curr.strftime("%Y%m%d")
             test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
             try:
-                res = requests.get(test_url, headers=headers, timeout=4)
+                res = requests.get(test_url, headers=headers, timeout=5)
                 data = res.json()
                 if (
                     data.get("stat") == "OK"
@@ -43,7 +43,7 @@ def fetch_twse_data():
         curr -= timedelta(days=1)
 
     if not dates:
-        return {}, {}, [], "", None
+        return {}, {}, [], ""
 
     latest_date = dates[0]
 
@@ -51,82 +51,83 @@ def fetch_twse_data():
     mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
     market_dict = {}
     try:
-        res = requests.get(mi_url, headers=headers, timeout=8)
+        res = requests.get(mi_url, headers=headers, timeout=10)
         data = res.json()
         if data.get("stat") == "OK":
             for table in data.get("tables", []):
                 if "data" in table:
                     for row in table["data"]:
-                        code = row[0].strip()
-                        if len(code) == 4:
-                            try:
-                                name = row[1].strip()
-                                issued_shares_total_raw = float(
-                                    row[2].replace(",", "")
-                                )
-                                total_turnover = float(
-                                    row[3].replace(",", "")
-                                )
-                                trading_volume = float(
-                                    row[4].replace(",", "")
-                                )
-                                close_price = float(row[7].replace(",", ""))
+                        if len(row) >= 11:
+                            code = row[0].strip()
+                            if len(code) == 4:
+                                try:
+                                    name = row[1].strip()
+                                    issued_shares_total_raw = float(
+                                        row[2].replace(",", "")
+                                    )
+                                    total_turnover = float(
+                                        row[3].replace(",", "")
+                                    )
+                                    trading_volume = float(
+                                        row[4].replace(",", "")
+                                    )
+                                    close_price = float(
+                                        row[7].replace(",", "")
+                                    )
 
-                                change_sign = (
-                                    row[8].strip() if len(row) > 8 else ""
-                                )
-                                raw_change_val = (
-                                    float(row[9].replace(",", ""))
-                                    if len(row) > 9
-                                    and row[9]
-                                    and row[9].strip() != ""
-                                    else 0.0
-                                )
-                                if (
-                                    "-" in change_sign
-                                    or "▼" in change_sign
-                                    or "跌" in change_sign
-                                ):
-                                    change_val = -abs(raw_change_val)
-                                elif (
-                                    "+" in change_sign
-                                    or "▲" in change_sign
-                                    or "漲" in change_sign
-                                ):
-                                    change_val = abs(raw_change_val)
-                                else:
-                                    change_val = raw_change_val
+                                    change_sign = row[8].strip()
+                                    raw_change_val = (
+                                        float(row[9].replace(",", ""))
+                                        if row[9].strip() != ""
+                                        else 0.0
+                                    )
+                                    if (
+                                        "-" in change_sign
+                                        or "▼" in change_sign
+                                        or "跌" in change_sign
+                                    ):
+                                        change_val = -abs(raw_change_val)
+                                    elif (
+                                        "+" in change_sign
+                                        or "▲" in change_sign
+                                        or "漲" in change_sign
+                                    ):
+                                        change_val = abs(raw_change_val)
+                                    else:
+                                        change_val = raw_change_val
 
-                                change_pct = (
-                                    float(row[10].replace(",", "%"))
-                                    if len(row) > 10
-                                    and row[10]
-                                    and row[10].strip() != ""
-                                    else 0.0
-                                )
-                                if (
-                                    "-" in change_sign
-                                    or "▼" in change_sign
-                                    or "跌" in change_sign
-                                ):
-                                    change_pct = -abs(change_pct)
+                                    change_pct = (
+                                        float(
+                                            row[10]
+                                            .replace(",", "")
+                                            .replace("%", "")
+                                        )
+                                        if row[10].strip() != ""
+                                        else 0.0
+                                    )
+                                    if (
+                                        "-" in change_sign
+                                        or "▼" in change_sign
+                                        or "跌" in change_sign
+                                    ):
+                                        change_pct = -abs(change_pct)
 
-                                vwap = (
-                                    (total_turnover / trading_volume)
-                                    if trading_volume > 0
-                                    else close_price
-                                )
-                                market_dict[code] = {
-                                    "官方名稱": name,
-                                    "發行總股數": issued_shares_total_raw,
-                                    "總成交金額_元": total_turnover,
-                                    "收盤價": close_price,
-                                    "成交均價": round(vwap, 2),
-                                    "漲跌幅(%)": change_pct,
-                                    "漲跌金額": change_val,
-                                }
-                            except:
-                                continue
+                                    vwap = (
+                                        (total_turnover / trading_volume)
+                                        if trading_volume > 0
+                                        else close_price
+                                    )
+                                    market_dict[code] = {
+                                        "官方名稱": name,
+                                        "發行總股數": issued_shares_total_raw,
+                                        "總成交金額_元": total_turnover,
+                                        "收盤價": close_price,
+                                        "成交均價": round(vwap, 2),
+                                        "漲跌幅(%)": change_pct,
+                                        "漲跌金額": change_val,
+                                    }
+                                except:
+                                    continue
     except Exception as e:
         print(f"MI_INDEX error: {e}")
 

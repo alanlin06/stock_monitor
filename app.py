@@ -537,8 +537,6 @@ if market_dict:
               "官方名稱",
               "外本比(%)",
               "外資買賣超張數",
-/usr/local/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py:1120: FutureWarning:
-The default fill_value of DataFrame.pivot is deprecated and will be removed in a future version. Use a specific fill_value to silence this warning.
               "收盤價",
               "漲跌幅(%)",
           ]],
@@ -593,7 +591,6 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
           .copy()
       )
 
-      # 動態計算雙榜交集標的的日K與週K多空狀態
       with st.spinner("正在為雙榜標的運算日K與週K多空成本線狀態..."):
         enhanced_names = []
         for _, r_item in df_cross.iterrows():
@@ -602,7 +599,6 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
           status_str = ""
 
           try:
-            # 抓取日K與週K
             df_d = yf.download(
                 f"{c_code}.TW", period="3mo", interval="1d", progress=False
             )
@@ -619,7 +615,6 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
                   f"{c_code}.TWO", period="1y", interval="1wk", progress=False
               )
 
-            # 判定日K
             day_ok = False
             if not df_d.empty:
               if isinstance(df_d.columns, pd.MultiIndex):
@@ -632,7 +627,6 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
               ):
                 day_ok = True
 
-            # 判定週K
             week_ok = False
             if not df_w.empty:
               if isinstance(df_w.columns, pd.MultiIndex):
@@ -645,7 +639,6 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
               ):
                 week_ok = True
 
-            # 組合字串
             if day_ok and week_ok:
               status_str = " (雙多)"
             elif not day_ok and not week_ok:
@@ -797,7 +790,7 @@ The default fill_value of DataFrame.pivot is deprecated and will be removed in a
                   })
 
           if all_trades:
-            df_result = pd.DataFrame(df_result) if 'df_result' in locals() else pd.DataFrame(all_trades)
+            df_result = pd.DataFrame(all_trades)
             win_t = len(df_result[df_result["持有報酬率(%)"] > 0])
             total_t = len(df_result)
             final_win_rate = (

@@ -50,6 +50,7 @@ with st.sidebar:
         💡 **指標說明**：
         - **外本比 (%)**：(外資買超股數 ÷ 官方發行總股數) × 100%。全排行榜同步納入計算。
         - **外資買超金額**：買超張數 × 平均價格 (VWAP) × 1000。
+        - **振幅均價線**：每根K棒 (最高價 - 最低價) 的滾動平均價格，用來取代傳統收盤價均線。
         """
     )
 
@@ -272,7 +273,7 @@ if market_dict:
         st.markdown("---")
 
         # ====================================================
-        # 四大外本比與成交值專屬排行榜分頁（表格內嵌選取看走勢圖）
+        # 四大排行榜（內嵌表格選取，改用「振幅平均線」）
         # ====================================================
         tab1, tab2, tab3, tab4 = st.tabs([
             "🔥 外資買超 Top 50", 
@@ -281,12 +282,10 @@ if market_dict:
             "🏆 全市場成交值 Top 100 (含外本比)"
         ])
 
-        # 共用的走勢圖繪製函式
         def render_chart_section(df_source, tab_name):
             st.subheader(f"📋 {tab_name} 全部標的清單")
-            st.caption("💡 提示：點擊下方表格任一列，即可直接在下方載入該標的的日K/週K走勢圖！")
+            st.caption("💡 提示：點擊下方表格任一列，即可直接在下方載入該標的的日K/週K走勢圖（含振幅平均線）！")
 
-            # 讓表格支援列選取互動
             event = st.dataframe(
                 df_source,
                 use_container_width=True, hide_index=True, height=450,
@@ -311,7 +310,7 @@ if market_dict:
                 yf_period = "1y" if "週K" in k_period_type else "6mo"
                 yf_interval = "1wk" if "週K" in k_period_type else "1d"
                 
-                with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與均價線..."):
+                with st.spinner(f"正在載入 {target_code} {target_name} 的 {k_period_type} 走勢與振幅平均線..."):
                     try:
                         df_stock = yf.download(f"{target_code}.TW", period=yf_period, interval=yf_interval, progress=False)
                         if df_stock.empty:
@@ -320,9 +319,14 @@ if market_dict:
                         if not df_stock.empty:
                             if isinstance(df_stock.columns, pd.MultiIndex):
                                 df_stock.columns = df_stock.columns.get_level_values(0)
-                                
-                            df_stock['MA10'] = df_stock['Close'].rolling(window=10).mean()
-                            df_stock['MA20'] = df_stock['Close'].rolling(window=20).mean()
+                            
+                            # 計算每根K棒的高低價差（振幅）與高低中間價（平均價格）
+                            df_stock['High_Low_Diff'] = df_stock['High'] - df_stock['Low']
+                            df_stock['Mid_Price'] = (df_stock['High'] + df_stock['Low']) / 2
+                            
+                            # 10期與20期的「振幅中間價滾動平均」
+                            df_stock['Range_MA10'] = df_stock['Mid_Price'].rolling(window=10).mean()
+                            df_stock['Range_MA20'] = df_stock['Mid_Price'].rolling(window=20).mean()
                             
                             fig = go.Figure()
                             fig.add_trace(go.Candlestick(
@@ -330,16 +334,16 @@ if market_dict:
                                 low=df_stock['Low'], close=df_stock['Close'], name=f'{k_period_type}線'
                             ))
                             fig.add_trace(go.Scatter(
-                                x=df_stock.index, y=df_stock['MA10'], mode='lines', 
-                                name='10日/週均價線', line=dict(color='orange', width=1.5)
+                                x=df_stock.index, y=df_stock['Range_MA10'], mode='lines', 
+                                name='10期振幅均價線', line=dict(color='orange', width=1.5)
                             ))
                             fig.add_trace(go.Scatter(
-                                x=df_stock.index, y=df_stock['MA20'], mode='lines', 
-                                name='20日/週均價線', line=dict(color='deepskyblue', width=1.5)
+                                x=df_stock.index, y=df_stock['Range_MA20'], mode='lines', 
+                                name='20期振幅均價線', line=dict(color='deepskyblue', width=1.5)
                             ))
                             
                             fig.update_layout(
-                                title=f"{target_code} {target_name} - {k_period_type}與均價走勢圖 (可縮放/平移)",
+                                title=f"{target_code} {target_name} - {k_period_type}與振幅均價線走勢圖 (可縮放/平移)",
                                 yaxis_title="股價 (TWD)", xaxis_title="日期",
                                 template="plotly_dark", height=480,
                                 margin=dict(l=10, r=10, t=40, b=10)

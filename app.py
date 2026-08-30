@@ -5,14 +5,14 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股雙軌籌碼終端機 (雙榜交叉 & 權值貢獻)",
+    page_title="台股雙軌籌碼終端機 (雙榜交叉 & 權值股即時貢獻)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
 st.title("🎯 雙榜交叉比對：外資本比 Top 50 ∩ 成交值 Top 100")
 st.caption(
-    "🔄 100% 串接證交所官方 API | 包含雙榜強勢股交叉比對、日K/週K多空雙K棒判定，以及前十大權值股對大盤貢獻度分析"
+    "🔄 100% 串接證交所官方 API | 包含雙榜強勢股交叉比對、日K/週K多空雙K棒判定，以及指定十大權值股對大盤點數影響分析"
 )
 
 
@@ -44,7 +44,7 @@ def fetch_twse_data():
 
     latest_date = dates[0]
 
-    # 1. 抓取 MI_INDEX 取得官方發行總股數、成交金額、收盤價與成交均價 (VWAP)
+    # 1. 抓取 MI_INDEX 取得官方發行總股數、成交金額、收盤價、漲跌金額與成交均價 (VWAP)
     mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
     market_dict = {}
     try:
@@ -68,6 +68,34 @@ def fetch_twse_data():
                                     row[4].replace(",", "")
                                 )
                                 close_price = float(row[7].replace(",", ""))
+
+                                # 漲跌符號判斷 (如 row[8] 有包含漲跌符號或直接抓 row[9] 數值)
+                                change_sign = (
+                                    row[8].strip() if len(row) > 8 else ""
+                                )
+                                raw_change_val = (
+                                    float(row[9].replace(",", ""))
+                                    if len(row) > 9
+                                    and row[9]
+                                    and row[9].strip() != ""
+                                    else 0.0
+                                )
+                                if (
+                                    "-" in change_sign
+                                    or "▼" in change_sign
+                                    or "跌" in change_sign
+                                ):
+                                    change_val = -abs(raw_change_val)
+                                elif (
+                                    "+" in change_sign
+                                    or "▲" in change_sign
+                                    or "漲" in change_sign
+                                ):
+                                    change_val = abs(raw_change_val)
+                                else:
+                                    # 如果符號欄位沒抓到，預設依數值正負或直接採用
+                                    change_val = raw_change_val
+
                                 change_pct = (
                                     float(row[10].replace(",", "%"))
                                     if len(row) > 10
@@ -75,6 +103,13 @@ def fetch_twse_data():
                                     and row[10].strip() != ""
                                     else 0.0
                                 )
+                                if (
+                                    "-" in change_sign
+                                    or "▼" in change_sign
+                                    or "跌" in change_sign
+                                ):
+                                    change_pct = -abs(change_pct)
+
                                 vwap = (
                                     (total_turnover / trading_volume)
                                     if trading_volume > 0
@@ -87,6 +122,7 @@ def fetch_twse_data():
                                     "收盤價": close_price,
                                     "成交均價": round(vwap, 2),
                                     "漲跌幅(%)": change_pct,
+                                    "漲跌金額": change_val,
                                 }
                             except:
                                 continue
@@ -108,9 +144,7 @@ def fetch_twse_data():
                     code = r[0].strip()
                     if len(code) == 4:
                         try:
-                            net_shares = int(
-                                r[4].replace(",", "")
-                            )  # 外資買賣超原始股數
+                            net_shares = int(r[4].replace(",", ""))
                             day_map[code] = net_shares
                             if i == 0:
                                 latest_foreign_shares[code] = net_shares
@@ -138,7 +172,6 @@ if latest_date:
     )
 
 if market_dict:
-    # 建立全市場基本 DataFrame
     base_rows = []
     for code, info in market_dict.items():
         f_shares = latest_foreign_shares.get(code, 0)
@@ -152,6 +185,7 @@ if market_dict:
                 "收盤價": info["收盤價"],
                 "成交均價": info["成交均價"],
                 "漲跌幅(%)": info["漲跌幅(%)"],
+                "漲跌金額": info["漲跌金額"],
                 "外資買賣超股數": f_shares,
                 "外資買賣超張數": f_shares / 1000,
                 "市值估算": info["發行總股數"] * info["收盤價"],
@@ -161,14 +195,13 @@ if market_dict:
     df_market = pd.DataFrame(base_rows)
 
     if not df_market.empty:
-        # 共用計算函式：計算外本比與連續買超天數
+
         def enrich_data(df):
             df = df.copy()
             df["外資買賣超金額_元"] = (
                 df["外資買賣超張數"] * 1000 * df["成交均價"]
             )
             df["外資買賣超金額(億)"] = round(df["外資買賣超金額_元"] / 1e8, 2)
-
             df["外本比(%)"] = df.apply(
                 lambda row: round(
                     (row["外資買賣超股數"] / row["發行總股數"]) * 100, 3
@@ -219,49 +252,71 @@ if market_dict:
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
         df_cross.insert(0, "交叉排行", range(1, len(df_cross) + 1))
 
-        # 多空狀態轉化為 K 棒圖示的函式
         def get_k_symbol(row):
             if row["外本比(%)"] > 1.0 and row["漲跌幅(%)"] >= 0:
-                status = "雙多"
-            elif row["漲跌幅(%)"] < 0:
-                status = "長多短空"
-            else:
-                status = "雙多"
-
-            if "雙多" in status:
                 return "🔴🔴 雙多"
-            elif "雙空" in status:
-                return "🟢🟢 雙空"
-            elif "長多短空" in status:
+            elif row["漲跌幅(%)"] < 0:
                 return "🔴🟢 長多短空"
-            elif "長空短多" in status or "短多長空" in status:
-                return "🟢🔴 長空短多"
             return "🔴🔴 雙多"
 
         df_cross["官方名稱"] = df_cross.apply(
             lambda row: f"{row['官方名稱']} ({get_k_symbol(row)})", axis=1
         )
 
-        # 4. 計算前十大權值股對加權指數漲跌貢獻
-        # 簡易估算公式：大盤點數變動 ≒ (該股市值 × 漲跌幅%) / 發行量加權指數基值常數 (或以權值佔比估算)
-        df_top_market_cap = df_market.sort_values(
-            by="市值估算", ascending=False
-        ).head(10).copy()
+        # 4. 精準對應你截圖中的十大權值股固定清單與正確代號
+        fixed_top10 = [
+            {"排名": 1, "股票": "台積電", "代號": "2330"},
+            {"排名": 2, "股票": "聯發科", "代號": "2454"},
+            {"排名": 3, "股票": "台達電", "代號": "2308"},
+            {"排名": 4, "股票": "鴻海", "代號": "2317"},
+            {"排名": 5, "股票": "日月光投控", "代號": "3711"},
+            {"排名": 6, "股票": "富邦金", "代號": "2881"},  # 證交所正確代號
+            {"排名": 7, "股票": "台光電", "代號": "2383"},  # 證交所正確代號
+            {"排名": 8, "股票": "聯電", "代號": "2303"},  # 證交所正確代號
+            {"排名": 9, "股票": "國泰金", "代號": "2882"},  # 證交所正確代號
+            {"排名": 10, "股票": "欣興", "代號": "3037"},
+        ]
+
         total_market_cap = df_market["市值估算"].sum()
 
-        # 假設大盤點數約為 22000 點作基準估算貢獻點數 (點數變動 ≒ 大盤點數 * 權重 * 漲跌幅%)
-        # 權重 = 市值 / 總市值
-        df_top_market_cap["大盤權重(%)"] = (
-            df_top_market_cap["市值估算"] / total_market_cap
-        ) * 100
-        # 貢獻點數估算 = 現有大盤點數 (假設 22000) * (權重%) * (漲跌幅%)
-        # 為了精準，直接用市值比例乘上假設大盤點數 22000 進行估算
-        assumed_index_points = 22000
-        df_top_market_cap["對大盤漲跌貢獻點數"] = (
-            assumed_index_points
-            * (df_top_market_cap["大盤權重(%)"] / 100)
-            * (df_top_market_cap["漲跌幅(%)"] / 100)
-        )
+        weight_rows = []
+        for item in fixed_top10:
+            code = item["代號"]
+            match_row = df_market[df_market["代號"] == code]
+            if not match_row.empty:
+                m_data = match_row.iloc[0]
+                mcap = m_data["市值估算"]
+                weight_pct = (
+                    (mcap / total_market_cap) * 100
+                    if total_market_cap > 0
+                    else 0
+                )
+                close_p = m_data["收盤價"]
+                change_amt = m_data["漲跌金額"]
+
+                # 每漲1元影響點數公式：權重佔比換算或對應試算表邏輯
+                impact_per_dollar = (
+                    weight_pct / 100 * 22000 / close_p
+                    if close_p > 0
+                    else 0
+                )
+                total_impact = change_amt * impact_per_dollar
+
+                weight_rows.append(
+                    {
+                        "排名": item["排名"],
+                        "股票": item["股票"],
+                        "代號": code,
+                        "權重(%)": round(weight_pct, 2),
+                        "最新收盤價": close_p,
+                        "每漲1元影響點數": round(impact_per_dollar, 2),
+                        "漲跌金額": change_amt,
+                        "影響點數": round(total_impact, 2),
+                    }
+                )
+
+        df_weight_final = pd.DataFrame(weight_rows)
+        total_index_impact = df_weight_final["影響點數"].sum()
 
         # 頂部總覽看板
         df_top50_by_ratio = df_top50.sort_values(
@@ -290,13 +345,12 @@ if market_dict:
         )
         st.markdown("---")
 
-        # 雙軌、雙榜與權值股貢獻分頁顯示
-        tab_cross, tab_top50, tab_top100, tab_weight = st.tabs(
+        # 畫面佈局：分頁顯示雙榜
+        tab_cross, tab_top50, tab_top100 = st.tabs(
             [
                 "🎯 雙榜交叉比對 (外本比Top50 ∩ 成交值Top100)",
                 "🔥 1. 外資買超排行 Top 50",
                 "💰 2. 全市場成交值排行 Top 100",
-                "⚖️ 3. 前十大權值股對大盤漲跌貢獻",
             ]
         )
 
@@ -344,7 +398,7 @@ if market_dict:
                 },
                 use_container_width=True,
                 hide_index=True,
-                height=600,
+                height=500,
             )
 
         with tab_top50:
@@ -389,7 +443,7 @@ if market_dict:
                 },
                 use_container_width=True,
                 hide_index=True,
-                height=600,
+                height=500,
             )
 
         with tab_top100:
@@ -438,51 +492,43 @@ if market_dict:
                 },
                 use_container_width=True,
                 hide_index=True,
-                height=600,
-            )
-
-        with tab_weight:
-            st.subheader("⚖️ 台股市值前十大權值股對加權指數漲跌貢獻分析")
-            st.markdown(
-                "💡 透過各權值股市值佔全市場比例與當日漲跌幅，即時推估其對大盤指數的漲跌貢獻點數。"
-            )
-            export_weight = df_top_market_cap[
-                [
-                    "代號",
-                    "官方名稱",
-                    "收盤價",
-                    "漲跌幅(%)",
-                    "大盤權重(%)",
-                    "對大盤漲跌貢獻點數",
-                ]
-            ].copy()
-            export_weight.insert(
-                0, "權值排名", range(1, len(export_weight) + 1)
-            )
-
-            st.dataframe(
-                export_weight,
-                column_config={
-                    "權值排名": "排名",
-                    "代號": "代號",
-                    "官方名稱": "名稱",
-                    "收盤價": st.column_config.NumberColumn(
-                        "收盤價", format="%.2f"
-                    ),
-                    "漲跌幅(%)": st.column_config.NumberColumn(
-                        "漲跌幅", format="%.2f %%"
-                    ),
-                    "大盤權重(%)": st.column_config.NumberColumn(
-                        "大盤權重", format="%.2f %%"
-                    ),
-                    "對大盤漲跌貢獻點數": st.column_config.NumberColumn(
-                        "📊 貢獻點數 (點)", format="%.2f 點"
-                    ),
-                },
-                use_container_width=True,
-                hide_index=True,
                 height=500,
             )
+
+        # ----------------------------------------------------
+        # 主畫面下方直接展開前十大權值股即時行情與影響點數計算表
+        # ----------------------------------------------------
+        st.markdown("---")
+        st.subheader(
+            f"⚖️ 前十大權值股對加權指數影響點數計算 (總影響點數估算：{round(total_index_impact, 2)} 點)"
+        )
+
+        st.dataframe(
+            df_weight_final,
+            column_config={
+                "排名": "排名",
+                "股票": "股票名稱",
+                "代號": "代號",
+                "權重(%)": st.column_config.NumberColumn(
+                    "權重", format="%.2f %%"
+                ),
+                "最新收盤價": st.column_config.NumberColumn(
+                    "最新收盤價", format="%.2f"
+                ),
+                "每漲1元影響點數": st.column_config.NumberColumn(
+                    "每漲1元影響點數", format="%.2f"
+                ),
+                "漲跌金額": st.column_config.NumberColumn(
+                    "漲跌金額", format="%.2f"
+                ),
+                "影響點數": st.column_config.NumberColumn(
+                    "📊 影響點數", format="%.2f 點"
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+        )
+
     else:
         st.warning("無法解析出市場行情資料。")
 else:

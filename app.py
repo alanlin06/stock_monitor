@@ -6,12 +6,12 @@ import streamlit as st
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼集中度 (外本比+投本比+大戶增減)",
+    page_title="台股籌碼集中度 (外本比 + 投本比 + 法人同步指標)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度 (多維度法人與大戶追蹤)")
+st.title("台股籌碼集中度 (外本比、投本比與法人動向雙A追蹤)")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -48,7 +48,7 @@ def fetch_twse_data():
         curr -= timedelta(days=1)
 
     if not dates:
-        return {}, {}, {}, {}, [], ""
+        return {}, {}, {}, [], ""
 
     latest_date = dates[0]
 
@@ -119,40 +119,21 @@ def fetch_twse_data():
         except Exception:
             continue
 
-    # 抓取集中保管戶權分散表 (最近兩週大戶持股變化)
-    # 證交所 TDCC 集中保管戶API
-    big_holder_change = {}
-    try:
-        tdcc_url = "https://www.tdcc.com.tw/portal/zh/smWeb/qryStock"
-        # 實務上若 TDCC API 有防堵或格式變動，透過公開端點取得最近期與前一期資料
-        # 此處使用防禦性寫法抓取集中保管結算所資料
-        tdcc_res = requests.get(
-            "https://opendata.twse.com.tw/api/v1/opendata/t187ap03_L",
-            headers=headers,
-            timeout=5,
-        )
-        # 若官方開放資料含有大戶持股等級，可在此整合。若為求穩定，我們以集保中心最近期資料計算：
-        # 註：若當週無大戶API回傳，系統將自動以 0.0% 顯示，確保程式不中斷。
-    except Exception:
-        pass
-
     return (
         market_dict,
         latest_foreign_shares,
         latest_trust_shares,
-        big_holder_change,
         hist_foreign_shares,
         dates,
         latest_date,
     )
 
 
-with st.spinner("⏳ 正在同步官方外資、投信及大戶籌碼資料，請稍候..."):
+with st.spinner("⏳ 正在同步官方外資與投信籌碼資料，請稍候..."):
     (
         market_dict,
         latest_foreign_shares,
         latest_trust_shares,
-        big_holder_change,
         hist_foreign_shares,
         target_dates,
         latest_date,
@@ -170,8 +151,6 @@ if market_dict:
     for code, info in market_dict.items():
         f_shares = latest_foreign_shares.get(code, 0)
         t_shares = latest_trust_shares.get(code, 0)
-        # 模擬或對應大戶週變動率 (百分比)，實務可對應 TDCC 資料
-        h_change = big_holder_change.get(code, 0.0)
 
         base_rows.append(
             {
@@ -183,7 +162,6 @@ if market_dict:
                 "外資買賣超張數": f_shares / 1000,
                 "投信買賣超股數": t_shares,
                 "投信買賣超張數": t_shares / 1000,
-                "大戶持股週變動率": h_change,
             }
         )
 
@@ -239,16 +217,26 @@ if market_dict:
             df["近20日外資累積買超(張)"] = [r[0] for r in res_20d]
             df["連續買超天數"] = [r[1] for r in res_20d]
 
-            # 依照需求：將千張大戶增減紀錄在顯示名稱後面 (例如: 台積電 [大戶 +1.2%])
+            # 依照需求：在顯示名稱後方備註外資與投信的同步動向（雙買、對做、或單邊）
             def format_display_name(row):
                 name = row["官方名稱"]
-                h_val = row["大戶持股週變動率"]
-                if h_val > 0:
-                    return f"{name} [大戶 +{h_val:.1f}%]"
-                elif h_val < 0:
-                    return f"{name} [大戶 {h_val:.1f}%]"
+                f_net = row["外資買賣超股數"]
+                t_net = row["投信買賣超股數"]
+
+                if f_net > 0 and t_net > 0:
+                    return f"{name} [🔥 雙A合擊: 雙買]"
+                elif f_net < 0 and t_net < 0:
+                    return f"{name} [❄️ 雙A雙賣]"
+                elif f_net > 0 and t_net < 0:
+                    return f"{name} [⚠️ 法人對做: 外買投賣]"
+                elif f_net < 0 and t_net > 0:
+                    return f"{name} [⚠️ 法人對做: 外賣投買]"
+                elif f_net > 0:
+                    return f"{name} [外資獨買]"
+                elif t_net > 0:
+                    return f"{name} [投信獨買]"
                 else:
-                    return f"{name} [大戶 0.0%]"
+                    return name
 
             df["顯示名稱"] = df.apply(format_display_name, axis=1)
             return df

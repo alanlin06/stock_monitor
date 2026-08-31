@@ -7,15 +7,13 @@ import streamlit as st
 import yfinance as yf
 
 st.set_page_config(
-    page_title="台股雙軌籌碼終端機 (自由平移與縮放版)",
+    page_title="台股籌碼資金集中度",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("⚡ 台股雙軌籌碼透視終端機 (外本比核心 + 可自由平移/縮放 K 線)")
-st.caption(
-    "🔄 100% 串接證交所官方資料 | 支援滑鼠滾輪縮放、自由拖曳平移與 20 日多空線"
-)
+st.title("📊 台股籌碼資金集中度")
+st.caption("🔄 100% 串接證交所官方資料 | 支援外本比核心與滑鼠自由平移縮放 K 線")
 
 
 @st.cache_data(ttl=600)
@@ -127,7 +125,7 @@ def fetch_twse_data():
     return market_dict, latest_foreign_shares, hist_foreign_shares, dates, latest_date
 
 
-with st.spinner("⚡ 正在同步證交所官方市場資料與外本比計算中..."):
+with st.spinner("⏳ 正在同步證交所官方市場資料與計算外本比..."):
     (
         market_dict,
         latest_foreign_shares,
@@ -248,11 +246,11 @@ if market_dict:
             f"{round(df_cross['外本比(%)'].mean(), 3)} %"
             if not df_cross.empty
             else "0.0 %",
-            "強勢籌碼集中度指標",
+            "籌碼集中度指標",
         )
         st.markdown("---")
 
-        # ==================== 三頁籤分頁顯示（支援點擊選取） ====================
+        # ==================== 分頁顯示 ====================
         tab_cross, tab_top50, tab_top100 = st.tabs(
             [
                 "🎯 雙榜交叉比對",
@@ -304,7 +302,7 @@ if market_dict:
             if sel3:
                 selected_stock_code = sel3
 
-        # ==================== 互動 K 線與專業多空線繪製區 ====================
+        # ==================== 互動 K 線與多空線繪製區 ====================
         if selected_stock_code:
             st.markdown("---")
             stock_info = df_market[df_market["代號"] == selected_stock_code]
@@ -318,7 +316,6 @@ if market_dict:
                 f"📈 股票即時走勢分析：{selected_stock_code} {stock_name}"
             )
 
-            # 下載 yfinance 歷史資料 (.TW)
             ticker_symbol = f"{selected_stock_code}.TW"
             df_hist = yf.download(
                 ticker_symbol, period="6mo", interval="1d", progress=False
@@ -331,21 +328,16 @@ if market_dict:
                 )
 
             if not df_hist.empty:
-                # 處理 MultiIndex 欄位問題
                 if isinstance(df_hist.columns, pd.MultiIndex):
                     df_hist.columns = df_hist.columns.droplevel(1)
 
-                # 20日多空線計算方式：
-                # 1. 計算 HLC3 (最高、最低、收盤價平均)
                 df_hist["HLC3"] = (
                     df_hist["High"] + df_hist["Low"] + df_hist["Close"]
                 ) / 3
-                # 2. 取 20 日移動平均作為中長期平滑多空平衡線
                 df_hist["Trend_Line"] = (
                     df_hist["HLC3"].rolling(window=20).mean()
                 )
 
-                # 切換日 K 與周 K 顯示
                 chart_type = st.radio(
                     "選擇 K 線週期", ["日 K 線", "周 K 線"], horizontal=True
                 )
@@ -367,10 +359,8 @@ if market_dict:
                         .dropna()
                     )
 
-                # 使用 Plotly 繪製紅綠 K 線與 20 日多空線
                 fig = go.Figure()
 
-                # 紅漲綠跌 K 線設定
                 fig.add_trace(
                     go.Candlestick(
                         x=plot_df.index,
@@ -379,12 +369,11 @@ if market_dict:
                         low=plot_df["Low"],
                         close=plot_df["Close"],
                         name="K 線",
-                        increasing_line_color="#FF4B4B",  # 紅色
-                        decreasing_line_color="#00CC96",  # 綠色
+                        increasing_line_color="#FF4B4B",
+                        decreasing_line_color="#00CC96",
                     )
                 )
 
-                # 20日專業多空平衡線 (HLC3 MA20)
                 fig.add_trace(
                     go.Scatter(
                         x=plot_df.index,
@@ -402,10 +391,9 @@ if market_dict:
                     xaxis_rangeslider_visible=False,
                     template="plotly_dark",
                     height=550,
-                    dragmode="pan",  # 讓滑鼠直接按住就能自由拖曳平移上下左右
+                    dragmode="pan",
                 )
 
-                # 支援滑鼠滾輪縮放與完整互動工具列設定
                 st.plotly_chart(
                     fig,
                     use_container_width=True,

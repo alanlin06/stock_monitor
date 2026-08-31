@@ -74,8 +74,9 @@ def fetch_twse_data():
                                 trading_volume = float(
                                     row[4].replace(",", "")
                                 )
+                                # 修正：證交所 MI_INDEX 收盤價位於 row[8]
                                 close_price = float(
-                                    row[7].replace(",", "")
+                                    row[8].replace(",", "")
                                 )
                                 change_pct = (
                                     float(row[10].replace(",", "%"))
@@ -481,7 +482,6 @@ if market_dict:
                     "⚡ 前十大權值股對加權指數影響點數計算 (模擬試算)"
                 )
 
-                # 依據畫面中的前10大權值股定義範本（代號、權重%、每漲1元影響點數）
                 top10_weights = [
                     {
                         "排名": 1,
@@ -560,7 +560,6 @@ if market_dict:
 
                 for item in top10_weights:
                     c = item["代號"]
-                    # 透過 yfinance 取得最新股價與前日收盤價來計算漲跌金額
                     try:
                         t_df = yf.download(
                             f"{c}.TW", period="2d", interval="1d", progress=False
@@ -587,7 +586,6 @@ if market_dict:
                     except:
                         latest_px, price_change = 0.0, 0.0
 
-                    # 計算影響點數 = 漲跌金額 * 每漲1元影響點數
                     impact_pts = round(
                         price_change * item["每漲1元影響點數"], 2
                     )

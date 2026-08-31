@@ -8,12 +8,12 @@ import yfinance as yf
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股權值股影響點數計算",
+    page_title="台股籌碼集中度",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股前十大權值股影響加權指數點數")
+st.title("台股籌碼集中度")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -74,7 +74,7 @@ def fetch_twse_data():
                                 trading_volume = float(
                                     row[4].replace(",", "")
                                 )
-                                # 修正：證交所 MI_INDEX 收盤價位於 row[8]
+                                # 收盤價位於 row[8]
                                 close_price = float(
                                     row[8].replace(",", "")
                                 )
@@ -373,7 +373,6 @@ if market_dict:
             )
 
             if not df_hist.empty:
-                # 計算日K HLC3 MA20
                 df_hist["HLC3"] = (
                     df_hist["High"] + df_hist["Low"] + df_hist["Close"]
                 ) / 3
@@ -388,7 +387,6 @@ if market_dict:
                     else False
                 )
 
-                # 計算週K HLC3 MA20
                 df_weekly = (
                     df_hist.resample("W")
                     .agg({"High": "max", "Low": "min", "Close": "last"})
@@ -412,7 +410,6 @@ if market_dict:
                 else:
                     week_above = day_above
 
-                # 判斷多空燈號
                 if day_above and week_above:
                     status_badge = "🟢 雙多 (日K站上、週K站上)"
                 elif not day_above and week_above:

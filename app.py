@@ -15,7 +15,7 @@ st.set_page_config(
 
 st.title("台股籌碼資金集中度")
 st.caption(
-    "🔄 100% 串接證交所官方資料 | 結合 20日波段外資主導、外本比雙榜交集與乖離率動態紅綠燈"
+    "🔄 100% 串接證交所官方資料 | 結合 20日波段外資主導、外本比雙榜交集、單日攻擊效率與乖離紅綠燈"
 )
 
 # ==================== 側邊欄參數設定 ====================
@@ -132,7 +132,7 @@ def fetch_twse_data():
     return market_dict, latest_foreign_shares, hist_foreign_shares, dates, latest_date
 
 
-with st.spinner("⏳ 正在同步證交所官方市場資料與計算 20 日波段籌碼中..."):
+with st.spinner("⏳ 正在同步證交所官方市場資料、計算波段與攻擊效率中..."):
     (
         market_dict,
         latest_foreign_shares,
@@ -184,7 +184,7 @@ if market_dict:
                 axis=1,
             )
 
-            # 1. 20日波段指標計算 (累積買超與連續天數)
+            # 1. 20日波段累積與連續天數
             def calc_20d_metrics(code):
                 accumulated_shares = 0
                 active_streak = 0
@@ -221,7 +221,7 @@ if market_dict:
 
             df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
 
-            # 3. 快速抓取最新 MA20 乖離率並賦予紅黃綠燈號
+            # 3. MA20 乖離率計算與紅黃綠燈號
             def get_bias_and_signal(code):
                 try:
                     ticker_symbol = f"{code}.TW"
@@ -262,14 +262,15 @@ if market_dict:
             def format_display_name(row):
                 name = row["官方名稱"]
                 bias = row["MA20乖離率(%)"]
+                eff = row["單日資金攻擊效率"]
 
-                # 依照使用者要求：>8% 紅字，5%-8% 黃字，<5% 綠字
+                # 結合攻擊型態與乖離紅黃綠燈號
                 if bias > bias_limit:
-                    return f"{name} 🔴 乖離過熱(+{bias}%)"
+                    return f"{name} ⚡(攻:{eff}) 🔴乖離過熱(+{bias}%)"
                 elif 5.0 <= bias <= bias_limit:
-                    return f"{name} 🟡 乖離警戒(+{bias}%)"
+                    return f"{name} ⚡(攻:{eff}) 🟡乖離警戒(+{bias}%)"
                 else:
-                    return f"{name} 🟢 乖離安全({bias}%)"
+                    return f"{name} ⚡(攻:{eff}) 🟢乖離安全({bias}%)"
 
             df["顯示名稱"] = df.apply(format_display_name, axis=1)
             return df

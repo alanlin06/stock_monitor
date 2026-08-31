@@ -63,47 +63,25 @@ def fetch_twse_data():
                 for table in data.get("tables", []):
                     if "data" in table:
                         for row in table["data"]:
-                            code = row[0].strip()
-                            if len(code) == 4:
-                                try:
-                                    name = row[1].strip()
-                                    issued_shares_total_raw = float(
-                                        row[2].replace(",", "")
-                                    )
-                                    close_price = float(
-                                        row[8].replace(",", "")
-                                    )
-
-                                    change_pct = 0.0
-                                    if len(row) > 10 and row[10]:
-                                        p_str = (
-                                            row[10]
-                                            .replace(",", "")
-                                            .replace("%", "")
-                                            .strip()
+                            if len(row) > 10:
+                                code = row[0].strip()
+                                if len(code) == 4 and code.isdigit():
+                                    try:
+                                        name = row[1].strip()
+                                        issued_shares_total_raw = float(
+                                            row[2].replace(",", "")
                                         )
-                                        if p_str and p_str != "--":
-                                            change_pct = float(p_str)
-
-                                    if change_pct != 0:
-                                        prev_price = close_price / (
-                                            1 + change_pct / 100
+                                        close_price = float(
+                                            row[8].replace(",", "")
                                         )
-                                        change_amt = round(
-                                            close_price - prev_price, 2
-                                        )
-                                    else:
-                                        change_amt = 0.0
 
-                                    market_dict[code] = {
-                                        "官方名稱": name,
-                                        "發行總股數": issued_shares_total_raw,
-                                        "收盤價": close_price,
-                                        "漲跌金額": change_amt,
-                                        "漲跌幅(%)": change_pct,
-                                    }
-                                except Exception:
-                                    continue
+                                        market_dict[code] = {
+                                            "官方名稱": name,
+                                            "發行總股數": issued_shares_total_raw,
+                                            "收盤價": close_price,
+                                        }
+                                    except Exception:
+                                        continue
     except Exception as e:
         print(f"MI_INDEX error: {e}")
 
@@ -119,15 +97,16 @@ def fetch_twse_data():
                     raw_rows = data.get("data", [])
                     day_map = {}
                     for r in raw_rows:
-                        code = r[0].strip()
-                        if len(code) == 4:
-                            try:
-                                net_shares = int(r[4].replace(",", ""))
-                                day_map[code] = net_shares
-                                if i == 0:
-                                    latest_foreign_shares[code] = net_shares
-                            except Exception:
-                                continue
+                        if len(r) > 4:
+                            code = r[0].strip()
+                            if len(code) == 4 and code.isdigit():
+                                try:
+                                    net_shares = int(r[4].replace(",", ""))
+                                    day_map[code] = net_shares
+                                    if i == 0:
+                                        latest_foreign_shares[code] = net_shares
+                                except Exception:
+                                    continue
                     hist_foreign_shares[d_str] = day_map
         except Exception:
             continue
@@ -167,7 +146,6 @@ if market_dict:
                 "官方名稱": info["官方名稱"],
                 "發行總股數": info["發行總股數"],
                 "收盤價": info["收盤價"],
-                "漲跌幅(%)": info["漲跌幅(%)"],
                 "外資買賣超股數": f_shares,
                 "外資買賣超張數": f_shares / 1000,
             }
@@ -213,15 +191,6 @@ if market_dict:
             res_20d = df["代號"].apply(calc_20d_metrics)
             df["近20日外資累積買超(張)"] = [r[0] for r in res_20d]
             df["連續買超天數"] = [r[1] for r in res_20d]
-
-            def calc_efficiency(row):
-                f_ratio = row["外本比(%)"]
-                pct = row["漲跌幅(%)"]
-                if f_ratio > 0:
-                    return round(pct / f_ratio, 2)
-                return 0.0
-
-            df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
             df["顯示名稱"] = df["官方名稱"]
             return df
 
@@ -237,7 +206,7 @@ if market_dict:
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
-        # 2. 準備成交值 Top 100
+        # 2. 準備成交值 Top 100 (這裡依買超張數排序示範)
         df_t_100 = df_market.sort_values(
             by="外資買賣超張數", ascending=False
         ).head(100)
@@ -288,142 +257,15 @@ if market_dict:
 
         with tab_cross:
             st.dataframe(
-                df_cross, use_container_width=True, hide_index=True, height=500
+                df_cross, use_container_width=True, hide_index=True, height=600
             )
 
         with tab_top50:
             st.dataframe(
-                df_top50, use_container_width=True, hide_index=True, height=500
+                df_top50, use_container_width=True, hide_index=True, height=600
             )
 
         with tab_top100:
             st.dataframe(
-                df_top100, use_container_width=True, hide_index=True, height=500
+                df_top100, use_container_width=True, hide_index=True, height=600
             )
-
-        # ==================== 重點權值股對加權指數影響點數計算 ====================
-        st.markdown("---")
-        st.subheader("⚡ 重點權值股對加權指數影響點數計算 (官方數據試算)")
-
-        top12_weights = [
-            {
-                "排名": 1,
-                "股票": "台積電",
-                "代號": "2330",
-                "權重": 41.4777,
-                "每漲1元影響點數": 8.43,
-            },
-            {
-                "排名": 2,
-                "股票": "聯發科",
-                "代號": "2454",
-                "權重": 4.1867,
-                "每漲1元影響點數": 0.48,
-            },
-            {
-                "排名": 3,
-                "股票": "台達電",
-                "代號": "2308",
-                "權重": 3.1786,
-                "每漲1元影響點數": 0.78,
-            },
-            {
-                "排名": 4,
-                "股票": "鴻海",
-                "代號": "2317",
-                "權重": 2.3325,
-                "每漲1元影響點數": 4.59,
-            },
-            {
-                "排名": 5,
-                "股票": "日月光投控",
-                "代號": "3711",
-                "權重": 1.7363,
-                "每漲1元影響點數": 1.33,
-            },
-            {
-                "排名": 6,
-                "股票": "富邦金",
-                "代號": "2881",
-                "權重": 1.3415,
-                "每漲1元影響點數": 3.91,
-            },
-            {
-                "排名": 7,
-                "股票": "台光電",
-                "代號": "2383",
-                "權重": 1.3071,
-                "每漲1元影響點數": 0.10,
-            },
-            {
-                "排名": 8,
-                "股票": "南亞",
-                "代號": "1303",
-                "權重": 1.2791,
-                "每漲1元影響點數": 0.35,
-            },
-            {
-                "排名": 9,
-                "股票": "南亞科",
-                "代號": "2408",
-                "權重": 1.1190,
-                "每漲1元影響點數": 0.15,
-            },
-            {
-                "排名": 10,
-                "股票": "欣興",
-                "代號": "3037",
-                "權重": 1.0889,
-                "每漲1元影響點數": 0.38,
-            },
-            {
-                "排名": 11,
-                "股票": "聯電",
-                "代號": "2303",
-                "權重": 1.0790,
-                "每漲1元影響點數": 1.10,
-            },
-            {
-                "排名": 12,
-                "股票": "國泰金",
-                "代號": "2882",
-                "權重": 1.0780,
-                "每漲1元影響點數": 4.79,
-            },
-        ]
-
-        calc_rows = []
-        total_impact_points = 0.0
-
-        for item in top12_weights:
-            c = item["代號"]
-            latest_px = 0.0
-            price_change = 0.0
-
-            if c in market_dict:
-                latest_px = market_dict[c]["收盤價"]
-                price_change = market_dict[c].get("漲跌金額", 0.0)
-
-            impact_pts = round(price_change * item["每漲1元影響點數"], 2)
-            total_impact_points += impact_pts
-
-            calc_rows.append(
-                {
-                    "排名": item["排名"],
-                    "股票": item["股票"],
-                    "代號": c,
-                    "權重(%)": item["權重"],
-                    "最新股價": latest_px,
-                    "每漲1元影響點數": item["每漲1元影響點數"],
-                    "漲跌金額": price_change,
-                    "影響點數": impact_pts,
-                }
-            )
-
-        df_impact = pd.DataFrame(calc_rows)
-        st.dataframe(df_impact, use_container_width=True, hide_index=True)
-
-        st.metric(
-            label="📊 重點權值股總影響點數",
-            value=f"{round(total_impact_points, 2)} 點",
-        )

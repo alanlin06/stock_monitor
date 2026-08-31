@@ -14,13 +14,13 @@ st.set_page_config(
 )
 
 st.title("台股籌碼資金集中度")
-st.caption(
-    "🔄 100% 串接證交所官方資料 | 結合 20日波段外資主導、外本比雙榜交集、單日攻擊效率與乖離紅綠燈"
-)
 
-# ==================== 側邊欄參數設定 ====================
-st.sidebar.header("實戰參數設定")
+# ==================== 側邊欄參數與即時搜尋 ====================
+st.sidebar.header("實戰參數與查找")
 bias_limit = st.sidebar.slider("MA20 乖離過熱警戒 (%)", 5.0, 15.0, 8.0, 0.5)
+search_query = st.sidebar.text_input(
+    "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
+)
 
 
 @st.cache_data(ttl=600)
@@ -132,7 +132,7 @@ def fetch_twse_data():
     return market_dict, latest_foreign_shares, hist_foreign_shares, dates, latest_date
 
 
-with st.spinner("⏳ 正在同步證交所官方市場資料、計算波段與攻擊效率中..."):
+with st.spinner("⏳ 正在同步官方籌碼資料..."):
     (
         market_dict,
         latest_foreign_shares,
@@ -143,7 +143,7 @@ with st.spinner("⏳ 正在同步證交所官方市場資料、計算波段與�
 
 if latest_date:
     st.sidebar.success(
-        f"📅 官方同步交易日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
+        f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
     )
 
 if market_dict:
@@ -221,7 +221,7 @@ if market_dict:
 
             df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
 
-            # 3. MA20 乖離率計算與紅黃綠燈號
+            # 3. MA20 乖離率與燈號
             def get_bias_and_signal(code):
                 try:
                     ticker_symbol = f"{code}.TW"
@@ -262,18 +262,19 @@ if market_dict:
             def format_display_name(row):
                 name = row["官方名稱"]
                 bias = row["MA20乖離率(%)"]
-                eff = row["單日資金攻擊效率"]
 
-                # 結合攻擊型態與乖離紅黃綠燈號
                 if bias > bias_limit:
-                    return f"{name} ⚡(攻:{eff}) 🔴乖離過熱(+{bias}%)"
+                    return f"{name} 🔴 (+{bias}%)"
                 elif 5.0 <= bias <= bias_limit:
-                    return f"{name} ⚡(攻:{eff}) 🟡乖離警戒(+{bias}%)"
+                    return f"{name} 🟡 (+{bias}%)"
                 else:
-                    return f"{name} ⚡(攻:{eff}) 🟢乖離安全({bias}%)"
+                    return f"{name} 🟢 ({bias}%)"
 
             df["顯示名稱"] = df.apply(format_display_name, axis=1)
             return df
+
+        # 完整市場enrich，方便隨時查找全市場任何一家
+        df_all_enriched = enrich_data(df_market)
 
         # 1. 準備外資買超 Top 50
         df_f_buy = (
@@ -283,6 +284,7 @@ if market_dict:
         )
         df_top50 = enrich_data(df_f_buy)
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
+        # 在最左邊新增「🔍 快速查找」欄位或以欄位呈現
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
         # 2. 準備成交值 Top 100
@@ -302,47 +304,56 @@ if market_dict:
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
         df_cross.insert(0, "外本比排序", range(1, len(df_cross) + 1))
 
-        # ==================== 頂部總覽看板 ====================
-        top_cross_row = (
-            df_cross.iloc[0] if not df_cross.empty else df_top50.iloc[0]
-        )
-        top_50_row = df_top50.iloc[0]
+        # ==================== 頁面最左方/頂部：即時查找獨立面板 ====================
+        st.markdown("### 🔍 任意台股快速查找")
+        col_input, col_info = st.columns([1, 3])
+        with col_input:
+            direct_search = st.text_input(
+                "輸入代號或名稱",
+                value=search_query,
+                placeholder="例如: 2330 或 台積電",
+                key="main_search_input",
+            )
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric(
-            "🔥 雙榜交集標的數",
-            f"{len(df_cross)} 檔",
-            "同時名列外資Top50與成交值Top100",
-        )
-        c2.metric(
-            "👑 雙榜最高外本比",
-            f"{top_cross_row['官方名稱']} ({top_cross_row['代號']})",
-            f"{top_cross_row['外本比(%)']}% (佔發行股數)",
-        )
-        c3.metric(
-            "🌟 外資買超 Top50 最高外本比",
-            f"{top_50_row['官方名稱']} ({top_50_row['代號']})",
-            f"{top_50_row['外本比(%)']}%",
-        )
-        c4.metric(
-            "📊 雙榜交集平均外本比",
-            f"{round(df_cross['外本比(%)'].mean(), 3)} %"
-            if not df_cross.empty
-            else "0.0 %",
-            "籌碼集中度指標",
-        )
+        if direct_search:
+            matched_df = df_all_enriched[
+                df_all_enriched["代號"].str.contains(direct_search)
+                | df_all_enriched["官方名稱"].str.contains(direct_search)
+            ]
+            if not matched_df.empty:
+                m_row = matched_df.iloc[0]
+                m_code = m_row["代號"]
+                m_name = m_row["官方名稱"]
+                m_bias = m_row["MA20乖離率(%)"]
+                m_eff = m_row["單日資金攻擊效率"]
+                m_ratio = m_row["外本比(%)"]
+                m_streak = m_row["連續買超天數"]
+                m_accum = m_row["近20日外資累積買超(張)"]
+
+                with col_info:
+                    st.success(
+                        f"🎯 **[{m_code}] {m_name}** | 外本比: **{m_ratio}%** | "
+                        f"攻擊效率: **{m_eff}** | 20日累積買超: **{m_accum}張** (連買 {m_streak}天) | 乖離: **{m_bias}%**"
+                    )
+                # 自動指定帶入下方圖表
+                selected_stock_code = m_code
+            else:
+                with col_info:
+                    st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
+                selected_stock_code = None
+        else:
+            selected_stock_code = None
+
         st.markdown("---")
 
         # ==================== 分頁顯示 ====================
         tab_cross, tab_top50, tab_top100 = st.tabs(
             [
-                "🎯 雙榜交叉比對 (外資Top50 × 成交值Top100)",
+                "🎯 雙榜交叉比對",
                 "🔥 1. 外資買超 Top 50",
-                "💰 2. 全市場成交值 Top 100",
+                "💰 2. 成交值 Top 100",
             ]
         )
-
-        selected_stock_code = None
 
         def render_interactive_table(df, key_name):
             export_df = df.copy()
@@ -362,25 +373,16 @@ if market_dict:
             return None
 
         with tab_cross:
-            st.subheader(
-                "🎯 雙榜交集強勢清單 (點選下方任一列即可查看 K 線與 20 日多空線)"
-            )
             sel1 = render_interactive_table(df_cross, "table_cross")
             if sel1:
                 selected_stock_code = sel1
 
         with tab_top50:
-            st.subheader(
-                "📋 外資買超 Top 50 完整排行 (點選下方任一列即可查看 K 線與 20 日多空線)"
-            )
             sel2 = render_interactive_table(df_top50, "table_top50")
             if sel2:
                 selected_stock_code = sel2
 
         with tab_top100:
-            st.subheader(
-                "📋 全市場成交值前 100 名股票 (點選下方任一列即可查看 K 線與 20 日多空線)"
-            )
             sel3 = render_interactive_table(df_top100, "table_top100")
             if sel3:
                 selected_stock_code = sel3
@@ -395,9 +397,7 @@ if market_dict:
                 else ""
             )
 
-            st.subheader(
-                f"📈 股票即時走勢與波段分析：{selected_stock_code} {stock_name}"
-            )
+            st.subheader(f"📈 查閱股票走勢與波段：{selected_stock_code} {stock_name}")
 
             ticker_symbol = f"{selected_stock_code}.TW"
             df_hist = yf.download(
@@ -422,7 +422,7 @@ if market_dict:
                 )
 
                 chart_type = st.radio(
-                    "選擇 K 線週期", ["日 K 線", "周 K 線"], horizontal=True
+                    "K線週期", ["日 K 線", "周 K 線"], horizontal=True
                 )
 
                 plot_df = df_hist.copy()
@@ -443,7 +443,6 @@ if market_dict:
                     )
 
                 fig = go.Figure()
-
                 fig.add_trace(
                     go.Candlestick(
                         x=plot_df.index,
@@ -451,47 +450,32 @@ if market_dict:
                         high=plot_df["High"],
                         low=plot_df["Low"],
                         close=plot_df["Close"],
-                        name="K 線",
+                        name="K線",
                         increasing_line_color="#FF4B4B",
                         decreasing_line_color="#00CC96",
                     )
                 )
-
                 fig.add_trace(
                     go.Scatter(
                         x=plot_df.index,
                         y=plot_df["Trend_Line"],
                         mode="lines",
-                        name="多空趨勢平衡線 (HLC3 MA20)",
+                        name="HLC3 MA20",
                         line=dict(color="#FFA15A", width=2.5),
                     )
                 )
-
                 fig.update_layout(
-                    title=f"{selected_stock_code} {stock_name} - {chart_type} 與 20日多空線",
                     xaxis_title="日期",
-                    yaxis_title="價格 (TWD)",
+                    yaxis_title="價格",
                     xaxis_rangeslider_visible=False,
                     template="plotly_dark",
-                    height=550,
-                    dragmode="pan",
+                    height=500,
                 )
+                st.plotly_chart(fig, use_container_width=True)
 
-                st.plotly_chart(
-                    fig,
-                    use_container_width=True,
-                    config={
-                        "scrollZoom": True,
-                        "displayModeBar": True,
-                        "editable": False,
-                    },
-                )
-
-                # ==================== 盤中即時 5 分鐘走勢監控 ====================
+                # 盤中即時 5 分鐘走勢
                 st.markdown("---")
-                st.subheader(
-                    f"⚡ {selected_stock_code} {stock_name} 盤中即時 5 分鐘走勢監控"
-                )
+                st.subheader("⚡ 盤中 5 分鐘即時走勢")
                 df_intraday = yf.download(
                     ticker_symbol, period="1d", interval="5m", progress=False
                 )
@@ -499,18 +483,5 @@ if market_dict:
                     if isinstance(df_intraday.columns, pd.MultiIndex):
                         df_intraday.columns = df_intraday.columns.droplevel(1)
                     st.line_chart(df_intraday["Close"])
-                    st.caption(
-                        "💡 盤中可觀察此 5 分鐘即時走勢，若該檔潛力股在平盤附近或小幅拉回時有大單支撐，即可考慮切入。"
-                    )
                 else:
-                    st.info(
-                        "目前非開盤時段，盤中 5 分鐘即時走勢僅在開盤期間顯示。"
-                    )
-            else:
-                st.warning(
-                    f"無法取得代號 {selected_stock_code} 的歷史 K 線數據。"
-                )
-    else:
-        st.warning("無法解析出市場行情資料。")
-else:
-    st.warning("目前無法取得證交所官方市場行情資料。")
+                    st.info("目前非開盤時段。")

@@ -12,8 +12,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📊 台股籌碼資金集中度")
-st.caption("🔄 100% 串接證交所官方資料 | 支援外本比核心與滑鼠自由平移縮放 K 線")
+st.title("📊 台股籌碼資金集中度（20日波段雙效過濾版）")
+st.caption(
+    "🔄 100% 串接證交所官方資料 | 結合 20日波段累積趨勢與單日資金攻擊效率燈號"
+)
 
 
 @st.cache_data(ttl=600)
@@ -25,7 +27,8 @@ def fetch_twse_data():
     curr = datetime.now()
     dates = []
 
-    while len(dates) < 5 and (datetime.now() - curr).days < 20:
+    # 為了計算 20 日累積波段，這裡抓取近 25 個交易日
+    while len(dates) < 25 and (datetime.now() - curr).days < 40:
         if curr.weekday() < 5:
             d_str = curr.strftime("%Y%m%d")
             test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
@@ -125,7 +128,7 @@ def fetch_twse_data():
     return market_dict, latest_foreign_shares, hist_foreign_shares, dates, latest_date
 
 
-with st.spinner("⏳ 正在同步證交所官方市場資料與計算外本比..."):
+with st.spinner("⏳ 正在同步證交所官方市場資料與計算 20 日波段籌碼中..."):
     (
         market_dict,
         latest_foreign_shares,
@@ -177,19 +180,66 @@ if market_dict:
                 axis=1,
             )
 
-            def calc_streak(code):
-                streak = 0
-                for d_str in target_dates:
-                    if code in hist_foreign_shares.get(d_str, {}):
-                        if hist_foreign_shares[d_str][code] > 0:
-                            streak += 1
-                        else:
-                            break
+            # 1. 20日波段指標計算 (累積買超與連續天數)
+            def calc_20d_metrics(code):
+                accumulated_shares = 0
+                active_streak = 0
+
+                # 計算近 20 個交易日累積外資買超張數
+                for i, d_str in enumerate(target_dates[:20]):
+                    day_map = hist_foreign_shares.get(d_str, {})
+                    if code in day_map:
+                        accumulated_shares += day_map[code]
                     else:
                         break
-                return streak
 
-            df["連續買超天數"] = df["代號"].apply(calc_streak)
+                # 計算連續買超天數
+                for d_str in target_dates:
+                    if (
+                        code in hist_foreign_shares.get(d_str, {})
+                        and hist_foreign_shares[d_str][code] > 0
+                    ):
+                        active_streak += 1
+                    else:
+                        break
+
+                return accumulated_shares / 1000, active_streak
+
+            res_20d = df["代號"].apply(calc_20d_metrics)
+            df["近20日外資累積買超(張)"] = [r[0] for r in res_20d]
+            df["連續買超天數"] = [r[1] for r in res_20d]
+
+            # 2. 單日資金攻擊效率計算 (漲跌幅 / 外本比)
+            def calc_efficiency(row):
+                f_ratio = row["外本比(%)"]
+                pct = row["漲跌幅(%)"]
+                if f_ratio > 0:
+                    return round(pct / f_ratio, 2)
+                return 0.0
+
+            df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
+
+            # 3. 雙層漏斗燈號判定 (紅燈、黃燈、綠燈)
+            def get_swing_signal(row):
+                f_ratio = row["外本比(%)"]
+                accum_20d = row["近20日外資累積買超(張)"]
+                streak = row["連續買超天數"]
+                efficiency = row["單日資金攻擊效率"]
+                pct = row["漲跌幅(%)"]
+
+                # 第一層濾網：20日波段必須是多頭（累積買超 > 0 且連續買超或外本比正向）
+                if accum_20d > 0 and (streak >= 2 or f_ratio > 0.02):
+                    # 第二層濾網：如果當日攻擊效率極高或漲幅強勢
+                    if efficiency > 0.5 and pct > 0:
+                        return "🔴 波段主升(高效攻擊)"
+                    else:
+                        return "🟡 波段穩健(蓄勢中)"
+                else:
+                    # 波段趨勢不佳直接歸類為籌碼鬆動
+                    return "🟢 籌碼鬆動/非波段"
+
+            df["波段攻擊燈號"] = df.apply(get_swing_signal, axis=1)
+            df["顯示名稱"] = df["官方名稱"] + " " + df["波段攻擊燈號"]
             return df
 
         # 1. 準備外資買超 Top 50
@@ -313,7 +363,7 @@ if market_dict:
             )
 
             st.subheader(
-                f"📈 股票即時走勢分析：{selected_stock_code} {stock_name}"
+                f"📈 股票即時走勢與波段分析：{selected_stock_code} {stock_name}"
             )
 
             ticker_symbol = f"{selected_stock_code}.TW"

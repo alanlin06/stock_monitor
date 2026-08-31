@@ -226,7 +226,8 @@ if market_dict:
         df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
         df_cross = enrich_data(df_cross)
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
-        df_cross.insert(0, "外本比排序", range(1, len(df_cross + 1)))
+        # 修正：將原本的 df_cross + 1 改為正確的 len(df_cross) + 1
+        df_cross.insert(0, "外本比排序", range(1, len(df_cross) + 1))
 
         # ==================== 頁面最左方/頂部：即時查找獨立面板 ====================
         st.markdown("### 🔍 任意台股快速查找")
@@ -299,7 +300,6 @@ if market_dict:
         # ==================== 多空狀態與 HLC3 MA20 數值顯示區 ====================
         if selected_stock_code:
             st.markdown("---")
-            # 修正：直接從 df_all_enriched 撈取，確保欄位穩定
             stock_info = df_all_enriched[
                 df_all_enriched["代號"] == selected_stock_code
             ]
@@ -316,7 +316,6 @@ if market_dict:
 
             @st.cache_data(ttl=600)
             def get_stock_history_and_status(code):
-                # 修正：同時支援上市(.TW)與上櫃(.TWO)，解決力積電等上櫃抓不到的問題
                 for suffix in [".TW", ".TWO"]:
                     ticker_symbol = f"{code}{suffix}"
                     try:

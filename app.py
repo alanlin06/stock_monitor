@@ -15,7 +15,7 @@ st.set_page_config(
 
 st.title("台股籌碼資金集中度")
 st.caption(
-    "🔄 100% 串接證交所官方資料 | 結合 20日波段外資主導、外本比雙榜交集與盤中即時盯盤"
+    "🔄 100% 串接證交所官方資料 | 結合 20日波段外資主導、外本比雙榜交集與乖離率動態紅綠燈"
 )
 
 # ==================== 側邊欄參數設定 ====================
@@ -32,7 +32,6 @@ def fetch_twse_data():
     curr = datetime.now()
     dates = []
 
-    # 為了計算 20 日累積波段，抓取近 25 個交易日
     while len(dates) < 25 and (datetime.now() - curr).days < 40:
         if curr.weekday() < 5:
             d_str = curr.strftime("%Y%m%d")
@@ -212,7 +211,7 @@ if market_dict:
             df["近20日外資累積買超(張)"] = [r[0] for r in res_20d]
             df["連續買超天數"] = [r[1] for r in res_20d]
 
-            # 2. 單日資金攻擊效率計算 (漲跌幅 / 外本比)
+            # 2. 單日資金攻擊效率計算
             def calc_efficiency(row):
                 f_ratio = row["外本比(%)"]
                 pct = row["漲跌幅(%)"]
@@ -222,25 +221,57 @@ if market_dict:
 
             df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
 
-            # 3. 燈號判定 (結合 20日波段、效率與乖離過熱防護)
-            def get_swing_signal(row):
-                f_ratio = row["外本比(%)"]
-                accum_20d = row["近20日外資累積買超(張)"]
-                streak = row["連續買超天數"]
-                efficiency = row["單日資金攻擊效率"]
-                pct = row["漲跌幅(%)"]
+            # 3. 快速抓取最新 MA20 乖離率並賦予紅黃綠燈號
+            def get_bias_and_signal(code):
+                try:
+                    ticker_symbol = f"{code}.TW"
+                    df_hist = yf.download(
+                        ticker_symbol,
+                        period="2mo",
+                        interval="1d",
+                        progress=False,
+                    )
+                    if df_hist.empty:
+                        ticker_symbol = f"{code}.TWO"
+                        df_hist = yf.download(
+                            ticker_symbol,
+                            period="2mo",
+                            interval="1d",
+                            progress=False,
+                        )
 
-                # 第一層濾網：20日波段必須是多頭
-                if accum_20d > 0 and (streak >= 2 or f_ratio > 0.02):
-                    if efficiency > 0.5 and pct > 0:
-                        return "🔴 波段主升(高效攻擊)"
-                    else:
-                        return "🟡 波段穩健(蓄勢中)"
+                    if not df_hist.empty:
+                        if isinstance(df_hist.columns, pd.MultiIndex):
+                            df_hist.columns = df_hist.columns.droplevel(1)
+                        hlc3 = (
+                            df_hist["High"]
+                            + df_hist["Low"]
+                            + df_hist["Close"]
+                        ) / 3
+                        ma20 = hlc3.rolling(window=20).mean().iloc[-1]
+                        close = df_hist["Close"].iloc[-1]
+                        if ma20 > 0:
+                            bias = round(((close - ma20) / ma20) * 100, 2)
+                            return bias
+                except:
+                    pass
+                return 0.0
+
+            df["MA20乖離率(%)"] = df["代號"].apply(get_bias_and_signal)
+
+            def format_display_name(row):
+                name = row["官方名稱"]
+                bias = row["MA20乖離率(%)"]
+
+                # 依照使用者要求：>8% 紅字，5%-8% 黃字，<5% 綠字
+                if bias > bias_limit:
+                    return f"{name} 🔴 乖離過熱(+{bias}%)"
+                elif 5.0 <= bias <= bias_limit:
+                    return f"{name} 🟡 乖離警戒(+{bias}%)"
                 else:
-                    return "🟢 籌碼鬆動/非波段"
+                    return f"{name} 🟢 乖離安全({bias}%)"
 
-            df["波段攻擊燈號"] = df.apply(get_swing_signal, axis=1)
-            df["顯示名稱"] = df["官方名稱"] + " " + df["波段攻擊燈號"]
+            df["顯示名稱"] = df.apply(format_display_name, axis=1)
             return df
 
         # 1. 準備外資買超 Top 50
@@ -260,7 +291,7 @@ if market_dict:
         df_top100 = enrich_data(df_t_100)
         df_top100.insert(0, "成交值排名", range(1, len(df_top100) + 1))
 
-        # 3. 雙榜交叉比對 (外資Top50 與 成交值Top100)
+        # 3. 雙榜交叉比對
         top50_codes = set(df_top50["代號"])
         top100_codes = set(df_top100["代號"])
         cross_codes = top50_codes.intersection(top100_codes)
@@ -388,22 +419,6 @@ if market_dict:
                 df_hist["Trend_Line"] = (
                     df_hist["HLC3"].rolling(window=20).mean()
                 )
-
-                # 計算最新乖離率以供參考
-                latest_close = df_hist["Close"].iloc[-1]
-                latest_ma20 = df_hist["Trend_Line"].iloc[-1]
-                bias_val = round(
-                    ((latest_close - latest_ma20) / latest_ma20) * 100, 2
-                )
-
-                if bias_val > bias_limit:
-                    st.warning(
-                        f"⚠️ **乖離過熱警示**：目前 MA20 乖離率為 **{bias_val}%**（超過您設定的 {bias_limit}% 警戒值）。短線漲幅較大，切勿直接追高，建議等待拉回至均線附近再行觀察！"
-                    )
-                else:
-                    st.success(
-                        f"✅ **乖離安全區間**：目前 MA20 乖離率為 **{bias_val}%**（小於警戒值 {bias_limit}%），短線技術面相對健康。"
-                    )
 
                 chart_type = st.radio(
                     "選擇 K 線週期", ["日 K 線", "周 K 線"], horizontal=True

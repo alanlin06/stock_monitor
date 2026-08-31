@@ -17,7 +17,6 @@ st.title("台股籌碼資金集中度")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
-bias_limit = st.sidebar.slider("MA20 乖離過熱警戒 (%)", 5.0, 15.0, 8.0, 0.5)
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
@@ -221,13 +220,13 @@ if market_dict:
 
             df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
 
-            # 3. MA20 乖離率與燈號
-            def get_bias_and_signal(code):
+            # 3. 日K與週K多空平均價格線狀態判斷
+            def get_multi_timeframe_status(code):
                 try:
                     ticker_symbol = f"{code}.TW"
                     df_hist = yf.download(
                         ticker_symbol,
-                        period="2mo",
+                        period="6mo",
                         interval="1d",
                         progress=False,
                     )
@@ -235,7 +234,7 @@ if market_dict:
                         ticker_symbol = f"{code}.TWO"
                         df_hist = yf.download(
                             ticker_symbol,
-                            period="2mo",
+                            period="6mo",
                             interval="1d",
                             progress=False,
                         )
@@ -243,32 +242,78 @@ if market_dict:
                     if not df_hist.empty:
                         if isinstance(df_hist.columns, pd.MultiIndex):
                             df_hist.columns = df_hist.columns.droplevel(1)
-                        hlc3 = (
+
+                        # 計算日K HLC3 MA20
+                        df_hist["HLC3"] = (
                             df_hist["High"]
                             + df_hist["Low"]
                             + df_hist["Close"]
                         ) / 3
-                        ma20 = hlc3.rolling(window=20).mean().iloc[-1]
-                        close = df_hist["Close"].iloc[-1]
-                        if ma20 > 0:
-                            bias = round(((close - ma20) / ma20) * 100, 2)
-                            return bias
+                        df_hist["MA20"] = (
+                            df_hist["HLC3"].rolling(window=20).mean()
+                        )
+
+                        last_row = df_hist.iloc[-1]
+                        day_above = (
+                            last_row["Close"] >= last_row["MA20"]
+                            if pd.notna(last_row["MA20"])
+                            else False
+                        )
+
+                        # 計算週K HLC3 MA20
+                        df_weekly = (
+                            df_hist.resample("W")
+                            .agg(
+                                {
+                                    "High": "max",
+                                    "Low": "min",
+                                    "Close": "last",
+                                }
+                            )
+                            .dropna()
+                        )
+                        if len(df_weekly) >= 20:
+                            df_weekly["W_HLC3"] = (
+                                df_weekly["High"]
+                                + df_weekly["Low"]
+                                + df_weekly["Close"]
+                            ) / 3
+                            df_weekly["W_MA20"] = (
+                                df_weekly["W_HLC3"].rolling(window=20).mean()
+                            )
+                            w_last = df_weekly.iloc[-1]
+                            week_above = (
+                                w_last["Close"] >= w_last["W_MA20"]
+                                if pd.notna(w_last["W_MA20"])
+                                else False
+                            )
+                        else:
+                            week_above = day_above
+
+                        return day_above, week_above
                 except:
                     pass
-                return 0.0
+                return False, False
 
-            df["MA20乖離率(%)"] = df["代號"].apply(get_bias_and_signal)
+            res_status = df["代號"].apply(get_multi_timeframe_status)
+            df["_日K站上"] = [r[0] for r in res_status]
+            df["_週K站上"] = [r[1] for r in res_status]
 
             def format_display_name(row):
                 name = row["官方名稱"]
-                bias = row["MA20乖離率(%)"]
+                d_up = row["_日K站上"]
+                w_up = row["_週K站上"]
 
-                if bias > bias_limit:
-                    return f"{name} 🔴 (+{bias}%)"
-                elif 5.0 <= bias <= bias_limit:
-                    return f"{name} 🟡 (+{bias}%)"
+                if d_up and w_up:
+                    status_text = "🟢 雙多"
+                elif not d_up and w_up:
+                    status_text = "🟡 長多短空"
+                elif d_up and not w_up:
+                    status_text = "🟠 短多長空"
                 else:
-                    return f"{name} 🟢 ({bias}%)"
+                    status_text = "🔴 雙空"
+
+                return f"{name} | {status_text}"
 
             df["顯示名稱"] = df.apply(format_display_name, axis=1)
             return df
@@ -284,7 +329,6 @@ if market_dict:
         )
         df_top50 = enrich_data(df_f_buy)
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
-        # 在最左邊新增「🔍 快速查找」欄位或以欄位呈現
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
         # 2. 準備成交值 Top 100
@@ -324,7 +368,7 @@ if market_dict:
                 m_row = matched_df.iloc[0]
                 m_code = m_row["代號"]
                 m_name = m_row["官方名稱"]
-                m_bias = m_row["MA20乖離率(%)"]
+                m_disp = m_row["顯示名稱"]
                 m_eff = m_row["單日資金攻擊效率"]
                 m_ratio = m_row["外本比(%)"]
                 m_streak = m_row["連續買超天數"]
@@ -332,8 +376,8 @@ if market_dict:
 
                 with col_info:
                     st.success(
-                        f"🎯 **[{m_code}] {m_name}** | 外本比: **{m_ratio}%** | "
-                        f"攻擊效率: **{m_eff}** | 20日累積買超: **{m_accum}張** (連買 {m_streak}天) | 乖離: **{m_bias}%**"
+                        f"🎯 **[{m_code}] {m_disp}** | 外本比: **{m_ratio}%** | "
+                        f"攻擊效率: **{m_eff}** | 20日累積買超: **{m_accum}張** (連買 {m_streak}天)"
                     )
                 # 自動指定帶入下方圖表
                 selected_stock_code = m_code

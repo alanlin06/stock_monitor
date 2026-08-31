@@ -23,25 +23,24 @@ search_query = st.sidebar.text_input(
 @st.cache_data(ttl=600)
 def fetch_twse_data():
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     curr = datetime.now()
     dates = []
 
-    while len(dates) < 25 and (datetime.now() - curr).days < 40:
+    # 往前尋找最近的 25 個交易日
+    while len(dates) < 25 and (datetime.now() - curr).days < 60:
         if curr.weekday() < 5:
             d_str = curr.strftime("%Y%m%d")
             test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
             try:
-                res = requests.get(test_url, headers=headers, timeout=4)
-                data = res.json()
-                if (
-                    data.get("stat") == "OK"
-                    and len(data.get("data", [])) > 0
-                ):
-                    dates.append(d_str)
-            except:
+                res = requests.get(test_url, headers=headers, timeout=3)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
+                        dates.append(d_str)
+            except Exception:
                 pass
         curr -= timedelta(days=1)
 
@@ -50,56 +49,58 @@ def fetch_twse_data():
 
     latest_date = dates[0]
 
+    # 抓取當日收盤行情 (MI_INDEX)
     mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
     market_dict = {}
     try:
-        res = requests.get(mi_url, headers=headers, timeout=8)
-        data = res.json()
-        if data.get("stat") == "OK":
-            for table in data.get("tables", []):
-                if "data" in table:
-                    for row in table["data"]:
-                        code = row[0].strip()
-                        if len(code) == 4:
-                            try:
-                                name = row[1].strip()
-                                issued_shares_total_raw = float(
-                                    row[2].replace(",", "")
-                                )
-                                close_price = float(
-                                    row[8].replace(",", "")
-                                )
-
-                                change_pct = 0.0
-                                if len(row) > 10 and row[10]:
-                                    p_str = (
-                                        row[10]
-                                        .replace(",", "")
-                                        .replace("%", "")
-                                        .strip()
+        res = requests.get(mi_url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("stat") == "OK":
+                for table in data.get("tables", []):
+                    if "data" in table:
+                        for row in table["data"]:
+                            code = row[0].strip()
+                            if len(code) == 4:
+                                try:
+                                    name = row[1].strip()
+                                    issued_shares_total_raw = float(
+                                        row[2].replace(",", "")
                                     )
-                                    if p_str and p_str != "--":
-                                        change_pct = float(p_str)
-
-                                if change_pct != 0:
-                                    prev_price = close_price / (
-                                        1 + change_pct / 100
+                                    close_price = float(
+                                        row[8].replace(",", "")
                                     )
-                                    change_amt = round(
-                                        close_price - prev_price, 2
-                                    )
-                                else:
-                                    change_amt = 0.0
 
-                                market_dict[code] = {
-                                    "官方名稱": name,
-                                    "發行總股數": issued_shares_total_raw,
-                                    "收盤價": close_price,
-                                    "漲跌金額": change_amt,
-                                    "漲跌幅(%)": change_pct,
-                                }
-                            except:
-                                continue
+                                    change_pct = 0.0
+                                    if len(row) > 10 and row[10]:
+                                        p_str = (
+                                            row[10]
+                                            .replace(",", "")
+                                            .replace("%", "")
+                                            .strip()
+                                        )
+                                        if p_str and p_str != "--":
+                                            change_pct = float(p_str)
+
+                                    if change_pct != 0:
+                                        prev_price = close_price / (
+                                            1 + change_pct / 100
+                                        )
+                                        change_amt = round(
+                                            close_price - prev_price, 2
+                                        )
+                                    else:
+                                        change_amt = 0.0
+
+                                    market_dict[code] = {
+                                        "官方名稱": name,
+                                        "發行總股數": issued_shares_total_raw,
+                                        "收盤價": close_price,
+                                        "漲跌金額": change_amt,
+                                        "漲跌幅(%)": change_pct,
+                                    }
+                                except Exception:
+                                    continue
     except Exception as e:
         print(f"MI_INDEX error: {e}")
 
@@ -108,23 +109,24 @@ def fetch_twse_data():
     for i, d_str in enumerate(dates):
         t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
         try:
-            res = requests.get(t86_url, headers=headers, timeout=5)
-            data = res.json()
-            if data.get("stat") == "OK":
-                raw_rows = data.get("data", [])
-                day_map = {}
-                for r in raw_rows:
-                    code = r[0].strip()
-                    if len(code) == 4:
-                        try:
-                            net_shares = int(r[4].replace(",", ""))
-                            day_map[code] = net_shares
-                            if i == 0:
-                                latest_foreign_shares[code] = net_shares
-                        except:
-                            continue
-                hist_foreign_shares[d_str] = day_map
-        except:
+            res = requests.get(t86_url, headers=headers, timeout=4)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("stat") == "OK":
+                    raw_rows = data.get("data", [])
+                    day_map = {}
+                    for r in raw_rows:
+                        code = r[0].strip()
+                        if len(code) == 4:
+                            try:
+                                net_shares = int(r[4].replace(",", ""))
+                                day_map[code] = net_shares
+                                if i == 0:
+                                    latest_foreign_shares[code] = net_shares
+                            except Exception:
+                                continue
+                    hist_foreign_shares[d_str] = day_map
+        except Exception:
             continue
 
     return (
@@ -136,7 +138,7 @@ def fetch_twse_data():
     )
 
 
-with st.spinner("⏳ 正在同步官方籌碼資料..."):
+with st.spinner("⏳ 正在同步官方籌碼資料，請稍候..."):
     (
         market_dict,
         latest_foreign_shares,
@@ -149,6 +151,8 @@ if latest_date:
     st.sidebar.success(
         f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
     )
+else:
+    st.warning("⚠️ 無法取得證交所官方資料，請檢查網路連線或稍後再試。")
 
 if market_dict:
     base_rows = []
@@ -185,7 +189,7 @@ if market_dict:
                 accumulated_shares = 0
                 active_streak = 0
 
-                for i, d_str in enumerate(target_dates[:20]):
+                for d_str in target_dates[:20]:
                     day_map = hist_foreign_shares.get(d_str, {})
                     if code in day_map:
                         accumulated_shares += day_map[code]
@@ -388,7 +392,7 @@ if market_dict:
         calc_rows = []
         total_impact_points = 0.0
 
-        for item in top12_weights:
+-        for item in top12_weights:
             c = item["代號"]
             latest_px = 0.0
             price_change = 0.0

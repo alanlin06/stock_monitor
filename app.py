@@ -46,7 +46,7 @@ def fetch_twse_data():
         curr -= timedelta(days=1)
 
     if not dates:
-        return {}, {}, [], ""
+        return {}, {}, {}, [], ""
 
     latest_date = dates[0]
 
@@ -70,7 +70,6 @@ def fetch_twse_data():
                                     row[8].replace(",", "")
                                 )
 
-                                # 從漲跌幅反推漲跌金額，若無則為 0
                                 change_pct = 0.0
                                 if len(row) > 10 and row[10]:
                                     p_str = (
@@ -82,7 +81,6 @@ def fetch_twse_data():
                                     if p_str and p_str != "--":
                                         change_pct = float(p_str)
 
-                                # 漲跌金額 = 收盤價 - (收盤價 / (1 + 漲跌幅% / 100))
                                 if change_pct != 0:
                                     prev_price = close_price / (
                                         1 + change_pct / 100
@@ -129,7 +127,13 @@ def fetch_twse_data():
         except:
             continue
 
-    return market_dict, latest_foreign_shares, hist_foreign_shares, dates, latest_date
+    return (
+        market_dict,
+        latest_foreign_shares,
+        hist_foreign_shares,
+        dates,
+        latest_date,
+    )
 
 
 with st.spinner("⏳ 正在同步官方籌碼資料..."):

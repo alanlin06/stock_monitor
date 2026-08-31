@@ -219,103 +219,7 @@ if market_dict:
                 return 0.0
 
             df["單日資金攻擊效率"] = df.apply(calc_efficiency, axis=1)
-
-            # 3. 日K與週K多空平均價格線狀態判斷
-            def get_multi_timeframe_status(code):
-                try:
-                    ticker_symbol = f"{code}.TW"
-                    df_hist = yf.download(
-                        ticker_symbol,
-                        period="6mo",
-                        interval="1d",
-                        progress=False,
-                    )
-                    if df_hist.empty:
-                        ticker_symbol = f"{code}.TWO"
-                        df_hist = yf.download(
-                            ticker_symbol,
-                            period="6mo",
-                            interval="1d",
-                            progress=False,
-                        )
-
-                    if not df_hist.empty:
-                        if isinstance(df_hist.columns, pd.MultiIndex):
-                            df_hist.columns = df_hist.columns.droplevel(1)
-
-                        # 計算日K HLC3 MA20
-                        df_hist["HLC3"] = (
-                            df_hist["High"]
-                            + df_hist["Low"]
-                            + df_hist["Close"]
-                        ) / 3
-                        df_hist["MA20"] = (
-                            df_hist["HLC3"].rolling(window=20).mean()
-                        )
-
-                        last_row = df_hist.iloc[-1]
-                        day_above = (
-                            last_row["Close"] >= last_row["MA20"]
-                            if pd.notna(last_row["MA20"])
-                            else False
-                        )
-
-                        # 計算週K HLC3 MA20
-                        df_weekly = (
-                            df_hist.resample("W")
-                            .agg(
-                                {
-                                    "High": "max",
-                                    "Low": "min",
-                                    "Close": "last",
-                                }
-                            )
-                            .dropna()
-                        )
-                        if len(df_weekly) >= 20:
-                            df_weekly["W_HLC3"] = (
-                                df_weekly["High"]
-                                + df_weekly["Low"]
-                                + df_weekly["Close"]
-                            ) / 3
-                            df_weekly["W_MA20"] = (
-                                df_weekly["W_HLC3"].rolling(window=20).mean()
-                            )
-                            w_last = df_weekly.iloc[-1]
-                            week_above = (
-                                w_last["Close"] >= w_last["W_MA20"]
-                                if pd.notna(w_last["W_MA20"])
-                                else False
-                            )
-                        else:
-                            week_above = day_above
-
-                        return day_above, week_above
-                except:
-                    pass
-                return False, False
-
-            res_status = df["代號"].apply(get_multi_timeframe_status)
-            df["_日K站上"] = [r[0] for r in res_status]
-            df["_週K站上"] = [r[1] for r in res_status]
-
-            def format_display_name(row):
-                name = row["官方名稱"]
-                d_up = row["_日K站上"]
-                w_up = row["_週K站上"]
-
-                if d_up and w_up:
-                    status_text = "🟢 雙多"
-                elif not d_up and w_up:
-                    status_text = "🟡 長多短空"
-                elif d_up and not w_up:
-                    status_text = "🟠 短多長空"
-                else:
-                    status_text = "🔴 雙空"
-
-                return f"{name} | {status_text}"
-
-            df["顯示名稱"] = df.apply(format_display_name, axis=1)
+            df["顯示名稱"] = df["官方名稱"]
             return df
 
         # 完整市場enrich，方便隨時查找全市場任何一家
@@ -359,6 +263,7 @@ if market_dict:
                 key="main_search_input",
             )
 
+        selected_stock_code = None
         if direct_search:
             matched_df = df_all_enriched[
                 df_all_enriched["代號"].str.contains(direct_search)
@@ -368,7 +273,6 @@ if market_dict:
                 m_row = matched_df.iloc[0]
                 m_code = m_row["代號"]
                 m_name = m_row["官方名稱"]
-                m_disp = m_row["顯示名稱"]
                 m_eff = m_row["單日資金攻擊效率"]
                 m_ratio = m_row["外本比(%)"]
                 m_streak = m_row["連續買超天數"]
@@ -376,17 +280,13 @@ if market_dict:
 
                 with col_info:
                     st.success(
-                        f"🎯 **[{m_code}] {m_disp}** | 外本比: **{m_ratio}%** | "
+                        f"🎯 **[{m_code}] {m_name}** | 外本比: **{m_ratio}%** | "
                         f"攻擊效率: **{m_eff}** | 20日累積買超: **{m_accum}張** (連買 {m_streak}天)"
                     )
-                # 自動指定帶入下方圖表
                 selected_stock_code = m_code
             else:
                 with col_info:
                     st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
-                selected_stock_code = None
-        else:
-            selected_stock_code = None
 
         st.markdown("---")
 
@@ -431,7 +331,7 @@ if market_dict:
             if sel3:
                 selected_stock_code = sel3
 
-        # ==================== 互動 K 線與多空線繪製區 ====================
+        # ==================== 互動 K 線與多空燈號繪製區 ====================
         if selected_stock_code:
             st.markdown("---")
             stock_info = df_market[df_market["代號"] == selected_stock_code]
@@ -441,29 +341,86 @@ if market_dict:
                 else ""
             )
 
-            st.subheader(f"📈 查閱股票走勢與波段：{selected_stock_code} {stock_name}")
-
-            ticker_symbol = f"{selected_stock_code}.TW"
-            df_hist = yf.download(
-                ticker_symbol, period="6mo", interval="1d", progress=False
+            st.subheader(
+                f"📈 查閱股票走勢與多空燈號：{selected_stock_code} {stock_name}"
             )
 
-            if df_hist.empty:
-                ticker_symbol = f"{selected_stock_code}.TWO"
-                df_hist = yf.download(
-                    ticker_symbol, period="6mo", interval="1d", progress=False
-                )
+
+            @st.cache_data(ttl=600)
+            def get_stock_history_and_status(code):
+                try:
+                    for suffix in [".TW", ".TWO"]:
+                        ticker_symbol = f"{code}{suffix}"
+                        df_hist = yf.download(
+                            ticker_symbol,
+                            period="6mo",
+                            interval="1d",
+                            progress=False,
+                        )
+                        if not df_hist.empty:
+                            if isinstance(df_hist.columns, pd.MultiIndex):
+                                df_hist.columns = df_hist.columns.droplevel(1)
+                            return df_hist, ticker_symbol
+                except:
+                    pass
+                return pd.DataFrame(), ""
+
+
+            df_hist, ticker_symbol = get_stock_history_and_status(
+                selected_stock_code
+            )
 
             if not df_hist.empty:
-                if isinstance(df_hist.columns, pd.MultiIndex):
-                    df_hist.columns = df_hist.columns.droplevel(1)
-
+                # 計算日K HLC3 MA20
                 df_hist["HLC3"] = (
                     df_hist["High"] + df_hist["Low"] + df_hist["Close"]
                 ) / 3
                 df_hist["Trend_Line"] = (
                     df_hist["HLC3"].rolling(window=20).mean()
                 )
+
+                last_row = df_hist.iloc[-1]
+                day_above = (
+                    last_row["Close"] >= last_row["Trend_Line"]
+                    if pd.notna(last_row["Trend_Line"])
+                    else False
+                )
+
+                # 計算週K HLC3 MA20
+                df_weekly = (
+                    df_hist.resample("W")
+                    .agg({"High": "max", "Low": "min", "Close": "last"})
+                    .dropna()
+                )
+                if len(df_weekly) >= 20:
+                    df_weekly["W_HLC3"] = (
+                        df_weekly["High"]
+                        + df_weekly["Low"]
+                        + df_weekly["Close"]
+                    ) / 3
+                    df_weekly["W_MA20"] = (
+                        df_weekly["W_HLC3"].rolling(window=20).mean()
+                    )
+                    w_last = df_weekly.iloc[-1]
+                    week_above = (
+                        w_last["Close"] >= w_last["W_MA20"]
+                        if pd.notna(w_last["W_MA20"])
+                        else False
+                    )
+                else:
+                    week_above = day_above
+
+                # 判斷多空燈號
+                if day_above and week_above:
+                    status_badge = "🟢 雙多 (日K站上、週K站上)"
+                elif not day_above and week_above:
+                    status_badge = "🟡 長多短空 (週K站上、日K跌破)"
+                elif day_above and not week_above:
+                    status_badge = "🟠 短多長空 (日K站上、週K跌破)"
+                else:
+                    status_badge = "🔴 雙空 (日K跌破、週K跌破)"
+
+                st.markdown(f"### 目前多空狀態： **{status_badge}**")
 
                 chart_type = st.radio(
                     "K線週期", ["日 K 線", "周 K 線"], horizontal=True

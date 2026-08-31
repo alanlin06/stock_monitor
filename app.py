@@ -3,7 +3,6 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-import yfinance as yf
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
@@ -70,6 +69,28 @@ def fetch_twse_data():
                                 close_price = float(
                                     row[8].replace(",", "")
                                 )
+                                # 嘗試抓取漲跌金額（官方 MI_INDEX 通常欄位 9 或 10 是漲跌金額/幅）
+                                change_amt = 0.0
+                                if len(row) > 9 and row[9]:
+                                    val_str = (
+                                        row[9]
+                                        .replace(",", "")
+                                        .replace("<span>", "")
+                                        .replace("</span>", "")
+                                    )
+                                    # 處理可能的正負號色彩標籤
+                                    if "+" in val_str:
+                                        change_amt = float(
+                                            val_str.replace("+", "")
+                                        )
+                                    elif "-" in val_str:
+                                        change_amt = float(val_str)
+                                    else:
+                                        try:
+                                            change_amt = float(val_str)
+                                        except:
+                                            pass
+
                                 change_pct = (
                                     float(row[10].replace(",", "%"))
                                     if len(row) > 10
@@ -82,6 +103,7 @@ def fetch_twse_data():
                                     "官方名稱": name,
                                     "發行總股數": issued_shares_total_raw,
                                     "收盤價": close_price,
+                                    "漲跌金額": change_amt,
                                     "漲跌幅(%)": change_pct,
                                 }
                             except:
@@ -276,7 +298,7 @@ if market_dict:
 
         # ==================== 重點權值股對加權指數影響點數計算 ====================
         st.markdown("---")
-        st.subheader("⚡ 重點權值股對加權指數影響點數計算 (模擬試算)")
+        st.subheader("⚡ 重點權值股對加權指數影響點數計算 (官方數據試算)")
 
         top12_weights = [
             {
@@ -370,29 +392,12 @@ if market_dict:
 
         for item in top12_weights:
             c = item["代號"]
-            latest_px, price_change = 0.0, 0.0
-            try:
-                for suffix in [".TW", ".TWO"]:
-                    t_df = yf.download(
-                        f"{c}{suffix}",
-                        period="2d",
-                        interval="1d",
-                        progress=False,
-                    )
-                    if not t_df.empty:
-                        if isinstance(t_df.columns, pd.MultiIndex):
-                            t_df.columns = t_df.columns.droplevel(1)
-                        if "Close" in t_df.columns:
-                            latest_px = float(t_df["Close"].iloc[-1])
-                            prev_px = float(
-                                t_df["Close"].iloc[-2]
-                                if len(t_df) > 1
-                                else latest_px
-                            )
-                            price_change = round(latest_px - prev_px, 2)
-                            break
-            except:
-                pass
+            latest_px = 0.0
+            price_change = 0.0
+
+            if c in market_dict:
+                latest_px = market_dict[c]["收盤價"]
+                price_change = market_dict[c].get("漲跌金額", 0.0)
 
             impact_pts = round(price_change * item["每漲1元影響點數"], 2)
             total_impact_points += impact_pts

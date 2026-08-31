@@ -68,12 +68,6 @@ def fetch_twse_data():
                                 issued_shares_total_raw = float(
                                     row[2].replace(",", "")
                                 )
-                                total_turnover = float(
-                                    row[3].replace(",", "")
-                                )
-                                trading_volume = float(
-                                    row[4].replace(",", "")
-                                )
                                 close_price = float(
                                     row[8].replace(",", "")
                                 )
@@ -85,17 +79,10 @@ def fetch_twse_data():
                                     else 0.0
                                 )
 
-                                vwap = (
-                                    (total_turnover / trading_volume)
-                                    if trading_volume > 0
-                                    else close_price
-                                )
-
                                 market_dict[code] = {
                                     "官方名稱": name,
                                     "發行總股數": issued_shares_total_raw,
                                     "收盤價": close_price,
-                                    "成交均價": round(vwap, 2),
                                     "漲跌幅(%)": change_pct,
                                 }
                             except:
@@ -154,7 +141,6 @@ if market_dict:
                 "官方名稱": info["官方名稱"],
                 "發行總股數": info["發行總股數"],
                 "收盤價": info["收盤價"],
-                "成交均價": info["成交均價"],
                 "漲跌幅(%)": info["漲跌幅(%)"],
                 "外資買賣超股數": f_shares,
                 "外資買賣超張數": f_shares / 1000,
@@ -167,7 +153,7 @@ if market_dict:
 
         def enrich_data(df):
             df = df.copy()
-            # 刪除外資買賣超金額與總成交金額欄位對應的計算，直接計算外本比
+            # 僅保留外本比與必要欄位，完全移除外資買賣超金額與總成交金額
             df["外本比(%)"] = df.apply(
                 lambda row: round(
                     (row["外資買賣超股數"] / row["發行總股數"]) * 100, 3
@@ -228,7 +214,7 @@ if market_dict:
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
-        # 2. 準備成交值 Top 100（依收盤價與張數估算排序，或保留原本邏輯但移除欄位）
+        # 2. 準備成交值/買超張數 Top 100
         df_t_100 = df_market.sort_values(
             by="外資買賣超張數", ascending=False
         ).head(100)
@@ -288,7 +274,7 @@ if market_dict:
             [
                 "🎯 雙榜交叉比對",
                 "🔥 1. 外資買超 Top 50",
-                "💰 2. 熱門強勢榜",
+                "💰 2. 成交值 Top 100",
             ]
         )
 
@@ -415,7 +401,6 @@ if market_dict:
                 else:
                     status_badge = "🔴 雙空 (日K跌破、週K跌破)"
 
-                # 💡 在畫面上直接並排顯示收盤價與 HLC3 MA20
                 col_m1, col_m2, col_m3 = st.columns(3)
                 col_m1.metric(
                     label="💰 最新收盤價", value=f"{round(last_close, 2)}"

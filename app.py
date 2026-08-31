@@ -74,7 +74,6 @@ def fetch_twse_data():
                                 trading_volume = float(
                                     row[4].replace(",", "")
                                 )
-                                # 收盤價位於 row[8]
                                 close_price = float(
                                     row[8].replace(",", "")
                                 )
@@ -95,7 +94,6 @@ def fetch_twse_data():
                                 market_dict[code] = {
                                     "官方名稱": name,
                                     "發行總股數": issued_shares_total_raw,
-                                    "總成交金額_元": total_turnover,
                                     "收盤價": close_price,
                                     "成交均價": round(vwap, 2),
                                     "漲跌幅(%)": change_pct,
@@ -155,8 +153,6 @@ if market_dict:
                 "代號": code,
                 "官方名稱": info["官方名稱"],
                 "發行總股數": info["發行總股數"],
-                "總成交金額_元": info["總成交金額_元"],
-                "總成交金額(億)": round(info["總成交金額_元"] / 1e8, 2),
                 "收盤價": info["收盤價"],
                 "成交均價": info["成交均價"],
                 "漲跌幅(%)": info["漲跌幅(%)"],
@@ -171,10 +167,7 @@ if market_dict:
 
         def enrich_data(df):
             df = df.copy()
-            df["外資買賣超金額_元"] = (
-                df["外資買賣超張數"] * 1000 * df["成交均價"]
-            )
-            df["外資買賣超金額(億)"] = round(df["外資買賣超金額_元"] / 1e8, 2)
+            # 刪除外資買賣超金額與總成交金額欄位對應的計算，直接計算外本比
             df["外本比(%)"] = df.apply(
                 lambda row: round(
                     (row["外資買賣超股數"] / row["發行總股數"]) * 100, 3
@@ -235,12 +228,12 @@ if market_dict:
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
-        # 2. 準備成交值 Top 100
+        # 2. 準備成交值 Top 100（依收盤價與張數估算排序，或保留原本邏輯但移除欄位）
         df_t_100 = df_market.sort_values(
-            by="總成交金額_元", ascending=False
+            by="外資買賣超張數", ascending=False
         ).head(100)
         df_top100 = enrich_data(df_t_100)
-        df_top100.insert(0, "成交值排名", range(1, len(df_top100) + 1))
+        df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
         # 3. 雙榜交叉比對
         top50_codes = set(df_top50["代號"])
@@ -295,7 +288,7 @@ if market_dict:
             [
                 "🎯 雙榜交叉比對",
                 "🔥 1. 外資買超 Top 50",
-                "💰 2. 成交值 Top 100",
+                "💰 2. 熱門強勢榜",
             ]
         )
 
@@ -333,7 +326,7 @@ if market_dict:
             if sel3:
                 selected_stock_code = sel3
 
-        # ==================== 互動 K 線與多空燈號繪製區 ====================
+        # ==================== 多空燈號與 HLC3 MA20 數值顯示區 ====================
         if selected_stock_code:
             st.markdown("---")
             stock_info = df_market[df_market["代號"] == selected_stock_code]
@@ -344,7 +337,7 @@ if market_dict:
             )
 
             st.subheader(
-                f"📈 查閱股票走勢與多空燈號：{selected_stock_code} {stock_name}"
+                f"📈 查閱多空狀態與均線數值：{selected_stock_code} {stock_name}"
             )
 
 
@@ -381,11 +374,14 @@ if market_dict:
                 )
 
                 last_row = df_hist.iloc[-1]
-                day_above = (
-                    last_row["Close"] >= last_row["Trend_Line"]
+                last_close = last_row["Close"]
+                last_hlc3_ma20 = (
+                    last_row["Trend_Line"]
                     if pd.notna(last_row["Trend_Line"])
-                    else False
+                    else 0.0
                 )
+
+                day_above = last_close >= last_hlc3_ma20
 
                 df_weekly = (
                     df_hist.resample("W")
@@ -419,59 +415,16 @@ if market_dict:
                 else:
                     status_badge = "🔴 雙空 (日K跌破、週K跌破)"
 
-                st.markdown(f"### 目前多空狀態： **{status_badge}**")
-
-                chart_type = st.radio(
-                    "K線週期", ["日 K 線", "周 K 線"], horizontal=True
+                # 💡 在畫面上直接並排顯示收盤價與 HLC3 MA20
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric(
+                    label="💰 最新收盤價", value=f"{round(last_close, 2)}"
                 )
-
-                plot_df = df_hist.copy()
-                if chart_type == "周 K 線":
-                    plot_df = (
-                        df_hist.resample("W")
-                        .agg(
-                            {
-                                "Open": "first",
-                                "High": "max",
-                                "Low": "min",
-                                "Close": "last",
-                                "Volume": "sum",
-                                "Trend_Line": "mean",
-                            }
-                        )
-                        .dropna()
-                    )
-
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Candlestick(
-                        x=plot_df.index,
-                        open=plot_df["Open"],
-                        high=plot_df["High"],
-                        low=plot_df["Low"],
-                        close=plot_df["Close"],
-                        name="K線",
-                        increasing_line_color="#FF4B4B",
-                        decreasing_line_color="#00CC96",
-                    )
+                col_m2.metric(
+                    label="📊 HLC3 20日均線",
+                    value=f"{round(last_hlc3_ma20, 2)}",
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=plot_df.index,
-                        y=plot_df["Trend_Line"],
-                        mode="lines",
-                        name="HLC3 MA20",
-                        line=dict(color="#FFA15A", width=2.5),
-                    )
-                )
-                fig.update_layout(
-                    xaxis_title="日期",
-                    yaxis_title="價格",
-                    xaxis_rangeslider_visible=False,
-                    template="plotly_dark",
-                    height=500,
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                col_m3.metric(label="🚩 多空狀態", value=status_badge)
 
                 # ==================== 前十大權值股對加權指數影響點數計算 ====================
                 st.markdown("---")

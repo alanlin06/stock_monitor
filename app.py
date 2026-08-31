@@ -153,7 +153,6 @@ if market_dict:
 
         def enrich_data(df):
             df = df.copy()
-            # 僅保留外本比與必要欄位，完全移除外資買賣超金額與總成交金額
             df["外本比(%)"] = df.apply(
                 lambda row: round(
                     (row["外資買賣超股數"] / row["發行總股數"]) * 100, 3
@@ -214,7 +213,7 @@ if market_dict:
         df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
         df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
-        # 2. 準備成交值/買超張數 Top 100
+        # 2. 準備成交值 Top 100
         df_t_100 = df_market.sort_values(
             by="外資買賣超張數", ascending=False
         ).head(100)
@@ -257,11 +256,6 @@ if market_dict:
                 m_streak = m_row["連續買超天數"]
                 m_accum = m_row["近20日外資累積買超(張)"]
 
-                with col_info:
-                    st.success(
-                        f"🎯 **[{m_code}] {m_name}** | 外本比: **{m_ratio}%** | "
-                        f"攻擊效率: **{m_eff}** | 20日累積買超: **{m_accum}張** (連買 {m_streak}天)"
-                    )
                 selected_stock_code = m_code
             else:
                 with col_info:
@@ -312,7 +306,7 @@ if market_dict:
             if sel3:
                 selected_stock_code = sel3
 
-        # ==================== 多空燈號與 HLC3 MA20 數值顯示區 ====================
+        # ==================== 多空狀態與 HLC3 MA20 數值顯示區 ====================
         if selected_stock_code:
             st.markdown("---")
             stock_info = df_market[df_market["代號"] == selected_stock_code]
@@ -401,6 +395,7 @@ if market_dict:
                 else:
                     status_badge = "🔴 雙空 (日K跌破、週K跌破)"
 
+                # 💡 收盤價與 HLC3 MA20 直接並排顯示
                 col_m1, col_m2, col_m3 = st.columns(3)
                 col_m1.metric(
                     label="💰 最新收盤價", value=f"{round(last_close, 2)}"

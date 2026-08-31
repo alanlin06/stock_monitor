@@ -38,7 +38,10 @@ def fetch_twse_data():
                 res = requests.get(test_url, headers=headers, timeout=3)
                 if res.status_code == 200:
                     data = res.json()
-                    if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
+                    if (
+                        data.get("stat") == "OK"
+                        and len(data.get("data", [])) > 0
+                    ):
                         dates.append(d_str)
             except Exception:
                 pass
@@ -392,7 +395,7 @@ if market_dict:
         calc_rows = []
         total_impact_points = 0.0
 
--        for item in top12_weights:
+        for item in top12_weights:
             c = item["代號"]
             latest_px = 0.0
             price_change = 0.0

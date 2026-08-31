@@ -69,35 +69,29 @@ def fetch_twse_data():
                                 close_price = float(
                                     row[8].replace(",", "")
                                 )
-                                # 嘗試抓取漲跌金額（官方 MI_INDEX 通常欄位 9 或 10 是漲跌金額/幅）
-                                change_amt = 0.0
-                                if len(row) > 9 and row[9]:
-                                    val_str = (
-                                        row[9]
-                                        .replace(",", "")
-                                        .replace("<span>", "")
-                                        .replace("</span>", "")
-                                    )
-                                    # 處理可能的正負號色彩標籤
-                                    if "+" in val_str:
-                                        change_amt = float(
-                                            val_str.replace("+", "")
-                                        )
-                                    elif "-" in val_str:
-                                        change_amt = float(val_str)
-                                    else:
-                                        try:
-                                            change_amt = float(val_str)
-                                        except:
-                                            pass
 
-                                change_pct = (
-                                    float(row[10].replace(",", "%"))
-                                    if len(row) > 10
-                                    and row[10]
-                                    and row[10].strip() != ""
-                                    else 0.0
-                                )
+                                # 從漲跌幅反推漲跌金額，若無則為 0
+                                change_pct = 0.0
+                                if len(row) > 10 and row[10]:
+                                    p_str = (
+                                        row[10]
+                                        .replace(",", "")
+                                        .replace("%", "")
+                                        .strip()
+                                    )
+                                    if p_str and p_str != "--":
+                                        change_pct = float(p_str)
+
+                                # 漲跌金額 = 收盤價 - (收盤價 / (1 + 漲跌幅% / 100))
+                                if change_pct != 0:
+                                    prev_price = close_price / (
+                                        1 + change_pct / 100
+                                    )
+                                    change_amt = round(
+                                        close_price - prev_price, 2
+                                    )
+                                else:
+                                    change_amt = 0.0
 
                                 market_dict[code] = {
                                     "官方名稱": name,

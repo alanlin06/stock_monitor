@@ -162,7 +162,6 @@ if market_dict:
                 axis=1,
             )
 
-            # 1. 20日波段累積與連續天數
             def calc_20d_metrics(code):
                 accumulated_shares = 0
                 active_streak = 0
@@ -189,7 +188,6 @@ if market_dict:
             df["近20日外資累積買超(張)"] = [r[0] for r in res_20d]
             df["連續買超天數"] = [r[1] for r in res_20d]
 
-            # 2. 單日資金攻擊效率計算
             def calc_efficiency(row):
                 f_ratio = row["外本比(%)"]
                 pct = row["漲跌幅(%)"]
@@ -228,7 +226,7 @@ if market_dict:
         df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
         df_cross = enrich_data(df_cross)
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
-        df_cross.insert(0, "外本比排序", range(1, len(df_cross) + 1))
+        df_cross.insert(0, "外本比排序", range(1, len(df_cross + 1)))
 
         # ==================== 頁面最左方/頂部：即時查找獨立面板 ====================
         st.markdown("### 🔍 任意台股快速查找")
@@ -248,15 +246,7 @@ if market_dict:
                 | df_all_enriched["官方名稱"].str.contains(direct_search)
             ]
             if not matched_df.empty:
-                m_row = matched_df.iloc[0]
-                m_code = m_row["代號"]
-                m_name = m_row["官方名稱"]
-                m_eff = m_row["單日資金攻擊效率"]
-                m_ratio = m_row["外本比(%)"]
-                m_streak = m_row["連續買超天數"]
-                m_accum = m_row["近20日外資累積買超(張)"]
-
-                selected_stock_code = m_code
+                selected_stock_code = matched_df.iloc[0]["代號"]
             else:
                 with col_info:
                     st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
@@ -309,11 +299,14 @@ if market_dict:
         # ==================== 多空狀態與 HLC3 MA20 數值顯示區 ====================
         if selected_stock_code:
             st.markdown("---")
-            stock_info = df_market[df_market["代號"] == selected_stock_code]
+            # 修正：直接從 df_all_enriched 撈取，確保欄位穩定
+            stock_info = df_all_enriched[
+                df_all_enriched["代號"] == selected_stock_code
+            ]
             stock_name = (
                 stock_info.iloc[0]["官方名稱"]
                 if not stock_info.empty
-                else ""
+                else selected_stock_code
             )
 
             st.subheader(
@@ -323,9 +316,10 @@ if market_dict:
 
             @st.cache_data(ttl=600)
             def get_stock_history_and_status(code):
-                try:
-                    for suffix in [".TW", ".TWO"]:
-                        ticker_symbol = f"{code}{suffix}"
+                # 修正：同時支援上市(.TW)與上櫃(.TWO)，解決力積電等上櫃抓不到的問題
+                for suffix in [".TW", ".TWO"]:
+                    ticker_symbol = f"{code}{suffix}"
+                    try:
                         df_hist = yf.download(
                             ticker_symbol,
                             period="6mo",
@@ -335,9 +329,10 @@ if market_dict:
                         if not df_hist.empty:
                             if isinstance(df_hist.columns, pd.MultiIndex):
                                 df_hist.columns = df_hist.columns.droplevel(1)
-                            return df_hist, ticker_symbol
-                except:
-                    pass
+                            if "Close" in df_hist.columns and len(df_hist) > 5:
+                                return df_hist, ticker_symbol
+                    except:
+                        pass
                 return pd.DataFrame(), ""
 
 
@@ -354,9 +349,9 @@ if market_dict:
                 )
 
                 last_row = df_hist.iloc[-1]
-                last_close = last_row["Close"]
+                last_close = float(last_row["Close"])
                 last_hlc3_ma20 = (
-                    last_row["Trend_Line"]
+                    float(last_row["Trend_Line"])
                     if pd.notna(last_row["Trend_Line"])
                     else 0.0
                 )
@@ -379,7 +374,7 @@ if market_dict:
                     )
                     w_last = df_weekly.iloc[-1]
                     week_above = (
-                        w_last["Close"] >= w_last["W_MA20"]
+                        float(w_last["Close"]) >= float(w_last["W_MA20"])
                         if pd.notna(w_last["W_MA20"])
                         else False
                     )
@@ -395,7 +390,6 @@ if market_dict:
                 else:
                     status_badge = "🔴 雙空 (日K跌破、週K跌破)"
 
-                # 💡 收盤價與 HLC3 MA20 直接並排顯示
                 col_m1, col_m2, col_m3 = st.columns(3)
                 col_m1.metric(
                     label="💰 最新收盤價", value=f"{round(last_close, 2)}"
@@ -490,31 +484,31 @@ if market_dict:
 
                 for item in top10_weights:
                     c = item["代號"]
+                    latest_px, price_change = 0.0, 0.0
                     try:
-                        t_df = yf.download(
-                            f"{c}.TW", period="2d", interval="1d", progress=False
-                        )
-                        if t_df.empty:
+                        for suffix in [".TW", ".TWO"]:
                             t_df = yf.download(
-                                f"{c}.TWO",
+                                f"{c}{suffix}",
                                 period="2d",
                                 interval="1d",
                                 progress=False,
                             )
-                        if not t_df.empty:
-                            if isinstance(t_df.columns, pd.MultiIndex):
-                                t_df.columns = t_df.columns.droplevel(1)
-                            latest_px = float(t_df["Close"].iloc[-1])
-                            prev_px = float(
-                                t_df["Close"].iloc[-2]
-                                if len(t_df) > 1
-                                else latest_px
-                            )
-                            price_change = round(latest_px - prev_px, 2)
-                        else:
-                            latest_px, price_change = 0.0, 0.0
+                            if not t_df.empty:
+                                if isinstance(t_df.columns, pd.MultiIndex):
+                                    t_df.columns = t_df.columns.droplevel(1)
+                                if "Close" in t_df.columns:
+                                    latest_px = float(t_df["Close"].iloc[-1])
+                                    prev_px = float(
+                                        t_df["Close"].iloc[-2]
+                                        if len(t_df) > 1
+                                        else latest_px
+                                    )
+                                    price_change = round(
+                                        latest_px - prev_px, 2
+                                    )
+                                    break
                     except:
-                        latest_px, price_change = 0.0, 0.0
+                        pass
 
                     impact_pts = round(
                         price_change * item["每漲1元影響點數"], 2
@@ -542,4 +536,4 @@ if market_dict:
                     value=f"{round(total_impact_points, 2)} 點",
                 )
             else:
-                st.info("目前非開盤時段或無法取得歷史資料。")
+                st.info("目前無法取得該股票的歷史資料。")

@@ -8,12 +8,12 @@ import yfinance as yf
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼資金集中度",
+    page_title="台股權值股影響點數計算",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼資金集中度")
+st.title("台股前十大權值股影響加權指數點數")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -222,7 +222,6 @@ if market_dict:
             df["顯示名稱"] = df["官方名稱"]
             return df
 
-        # 完整市場enrich，方便隨時查找全市場任何一家
         df_all_enriched = enrich_data(df_market)
 
         # 1. 準備外資買超 Top 50
@@ -299,6 +298,7 @@ if market_dict:
             ]
         )
 
+
         def render_interactive_table(df, key_name):
             export_df = df.copy()
             event = st.dataframe(
@@ -315,6 +315,7 @@ if market_dict:
                 idx = selected_rows[0]
                 return str(export_df.iloc[idx]["代號"])
             return None
+
 
         with tab_cross:
             sel1 = render_interactive_table(df_cross, "table_cross")
@@ -474,15 +475,143 @@ if market_dict:
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-                # 盤中即時 5 分鐘走勢
+                # ==================== 前十大權值股對加權指數影響點數計算 ====================
                 st.markdown("---")
-                st.subheader("⚡ 盤中 5 分鐘即時走勢")
-                df_intraday = yf.download(
-                    ticker_symbol, period="1d", interval="5m", progress=False
+                st.subheader(
+                    "⚡ 前十大權值股對加權指數影響點數計算 (模擬試算)"
                 )
-                if not df_intraday.empty:
-                    if isinstance(df_intraday.columns, pd.MultiIndex):
-                        df_intraday.columns = df_intraday.columns.droplevel(1)
-                    st.line_chart(df_intraday["Close"])
-                else:
-                    st.info("目前非開盤時段。")
+
+                # 依據畫面中的前10大權值股定義範本（代號、權重%、每漲1元影響點數）
+                top10_weights = [
+                    {
+                        "排名": 1,
+                        "股票": "台積電",
+                        "代號": "2330",
+                        "權重": 44.77,
+                        "每漲1元影響點數": 8.43,
+                    },
+                    {
+                        "排名": 2,
+                        "股票": "聯發科",
+                        "代號": "2454",
+                        "權重": 4.05,
+                        "每漲1元影響點數": 0.48,
+                    },
+                    {
+                        "排名": 3,
+                        "股票": "台達電",
+                        "代號": "2308",
+                        "權重": 3.03,
+                        "每漲1元影響點數": 0.78,
+                    },
+                    {
+                        "排名": 4,
+                        "股票": "鴻海",
+                        "代號": "2317",
+                        "權重": 2.50,
+                        "每漲1元影響點數": 4.59,
+                    },
+                    {
+                        "排名": 5,
+                        "股票": "日月光投控",
+                        "代號": "3711",
+                        "權重": 1.76,
+                        "每漲1元影響點數": 1.33,
+                    },
+                    {
+                        "排名": 6,
+                        "股票": "富邦金",
+                        "代號": "2327",
+                        "權重": 1.29,
+                        "每漲1元影響點數": 4.37,
+                    },
+                    {
+                        "排名": 7,
+                        "股票": "台光電",
+                        "代號": "2303",
+                        "權重": 1.21,
+                        "每漲1元影響點數": 0.10,
+                    },
+                    {
+                        "排名": 8,
+                        "股票": "聯電",
+                        "代號": "2881",
+                        "權重": 1.08,
+                        "每漲1元影響點數": 3.91,
+                    },
+                    {
+                        "排名": 9,
+                        "股票": "國泰金",
+                        "代號": "2383",
+                        "權重": 1.06,
+                        "每漲1元影響點數": 4.79,
+                    },
+                    {
+                        "排名": 10,
+                        "股票": "欣興",
+                        "代號": "3037",
+                        "權重": 0.91,
+                        "每漲1元影響點數": 0.38,
+                    },
+                ]
+
+                calc_rows = []
+                total_impact_points = 0.0
+
+                for item in top10_weights:
+                    c = item["代號"]
+                    # 透過 yfinance 取得最新股價與前日收盤價來計算漲跌金額
+                    try:
+                        t_df = yf.download(
+                            f"{c}.TW", period="2d", interval="1d", progress=False
+                        )
+                        if t_df.empty:
+                            t_df = yf.download(
+                                f"{c}.TWO",
+                                period="2d",
+                                interval="1d",
+                                progress=False,
+                            )
+                        if not t_df.empty:
+                            if isinstance(t_df.columns, pd.MultiIndex):
+                                t_df.columns = t_df.columns.droplevel(1)
+                            latest_px = float(t_df["Close"].iloc[-1])
+                            prev_px = float(
+                                t_df["Close"].iloc[-2]
+                                if len(t_df) > 1
+                                else latest_px
+                            )
+                            price_change = round(latest_px - prev_px, 2)
+                        else:
+                            latest_px, price_change = 0.0, 0.0
+                    except:
+                        latest_px, price_change = 0.0, 0.0
+
+                    # 計算影響點數 = 漲跌金額 * 每漲1元影響點數
+                    impact_pts = round(
+                        price_change * item["每漲1元影響點數"], 2
+                    )
+                    total_impact_points += impact_pts
+
+                    calc_rows.append(
+                        {
+                            "排名": item["排名"],
+                            "股票": item["股票"],
+                            "代號": c,
+                            "權重(%)": item["權重"],
+                            "最新股價": latest_px,
+                            "每漲1元影響點數": item["每漲1元影響點數"],
+                            "漲跌金額": price_change,
+                            "影響點數": impact_pts,
+                        }
+                    )
+
+                df_impact = pd.DataFrame(calc_rows)
+                st.dataframe(df_impact, use_container_width=True, hide_index=True)
+
+                st.metric(
+                    label="📊 前十大權值股總影響點數",
+                    value=f"{round(total_impact_points, 2)} 點",
+                )
+            else:
+                st.info("目前非開盤時段或無法取得歷史資料。")

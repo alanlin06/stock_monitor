@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
@@ -90,8 +89,8 @@ def fetch_twse_data():
     except Exception as e:
         print(f"MI_INDEX error: {e}")
 
-    hist_foreign_shares = {}
     latest_foreign_shares = {}
+    hist_foreign_shares = {}
     for i, d_str in enumerate(dates):
         t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
         try:
@@ -226,12 +225,11 @@ if market_dict:
         df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
         df_cross = enrich_data(df_cross)
         df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
-        # 修正：將原本的 df_cross + 1 改為正確的 len(df_cross) + 1
         df_cross.insert(0, "外本比排序", range(1, len(df_cross) + 1))
 
-        # ==================== 頁面最左方/頂部：即時查找獨立面板 ====================
-        st.markdown("### 🔍 任意台股快速查找")
-        col_input, col_info = st.columns([1, 3])
+        # ==================== 頁面頂部：即時搜尋篩選面板 ====================
+        st.markdown("### 🔍 任意台股快速查找與篩選")
+        col_input, _ = st.columns([1, 3])
         with col_input:
             direct_search = st.text_input(
                 "輸入代號或名稱",
@@ -240,21 +238,19 @@ if market_dict:
                 key="main_search_input",
             )
 
-        selected_stock_code = None
         if direct_search:
             matched_df = df_all_enriched[
                 df_all_enriched["代號"].str.contains(direct_search)
                 | df_all_enriched["官方名稱"].str.contains(direct_search)
             ]
             if not matched_df.empty:
-                selected_stock_code = matched_df.iloc[0]["代號"]
+                st.success(f"找到符合「{direct_search}」的股票：")
+                st.dataframe(matched_df, use_container_width=True, hide_index=True)
             else:
-                with col_info:
-                    st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
+                st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
+            st.markdown("---")
 
-        st.markdown("---")
-
-        # ==================== 分頁顯示 ====================
+        # ==================== 分頁顯示排行榜 ====================
         tab_cross, tab_top50, tab_top100 = st.tabs(
             [
                 "🎯 雙榜交叉比對",
@@ -263,276 +259,147 @@ if market_dict:
             ]
         )
 
-
-        def render_interactive_table(df, key_name):
-            export_df = df.copy()
-            event = st.dataframe(
-                export_df,
-                use_container_width=True,
-                hide_index=True,
-                height=450,
-                on_select="rerun",
-                selection_mode="single-row",
-                key=key_name,
-            )
-            selected_rows = event.selection.rows
-            if selected_rows:
-                idx = selected_rows[0]
-                return str(export_df.iloc[idx]["代號"])
-            return None
-
-
         with tab_cross:
-            sel1 = render_interactive_table(df_cross, "table_cross")
-            if sel1:
-                selected_stock_code = sel1
+            st.dataframe(
+                df_cross, use_container_width=True, hide_index=True, height=500
+            )
 
         with tab_top50:
-            sel2 = render_interactive_table(df_top50, "table_top50")
-            if sel2:
-                selected_stock_code = sel2
+            st.dataframe(
+                df_top50, use_container_width=True, hide_index=True, height=500
+            )
 
         with tab_top100:
-            sel3 = render_interactive_table(df_top100, "table_top100")
-            if sel3:
-                selected_stock_code = sel3
-
-        # ==================== 多空狀態與 HLC3 MA20 數值顯示區 ====================
-        if selected_stock_code:
-            st.markdown("---")
-            stock_info = df_all_enriched[
-                df_all_enriched["代號"] == selected_stock_code
-            ]
-            stock_name = (
-                stock_info.iloc[0]["官方名稱"]
-                if not stock_info.empty
-                else selected_stock_code
+            st.dataframe(
+                df_top100, use_container_width=True, hide_index=True, height=500
             )
 
-            st.subheader(
-                f"📈 查閱多空狀態與均線數值：{selected_stock_code} {stock_name}"
-            )
+        # ==================== 前十大權值股對加權指數影響點數計算 (保留區塊) ====================
+        st.markdown("---")
+        st.subheader("⚡ 前十大權值股對加權指數影響點數計算 (模擬試算)")
 
+        top10_weights = [
+            {
+                "排名": 1,
+                "股票": "台積電",
+                "代號": "2330",
+                "權重": 44.77,
+                "每漲1元影響點數": 8.43,
+            },
+            {
+                "排名": 2,
+                "股票": "聯發科",
+                "代號": "2454",
+                "權重": 4.05,
+                "每漲1元影響點數": 0.48,
+            },
+            {
+                "排名": 3,
+                "股票": "台達電",
+                "代號": "2308",
+                "權重": 3.03,
+                "每漲1元影響點數": 0.78,
+            },
+            {
+                "排名": 4,
+                "股票": "鴻海",
+                "代號": "2317",
+                "權重": 2.50,
+                "每漲1元影響點數": 4.59,
+            },
+            {
+                "排名": 5,
+                "股票": "日月光投控",
+                "代號": "3711",
+                "權重": 1.76,
+                "每漲1元影響點數": 1.33,
+            },
+            {
+                "排名": 6,
+                "股票": "富邦金",
+                "代號": "2327",
+                "權重": 1.29,
+                "每漲1元影響點數": 4.37,
+            },
+            {
+                "排名": 7,
+                "股票": "台光電",
+                "代號": "2303",
+                "權重": 1.21,
+                "每漲1元影響點數": 0.10,
+            },
+            {
+                "排名": 8,
+                "股票": "聯電",
+                "代號": "2881",
+                "權重": 1.08,
+                "每漲1元影響點數": 3.91,
+            },
+            {
+                "排名": 9,
+                "股票": "國泰金",
+                "代號": "2383",
+                "權重": 1.06,
+                "每漲1元影響點數": 4.79,
+            },
+            {
+                "排名": 10,
+                "股票": "欣興",
+                "代號": "3037",
+                "權重": 0.91,
+                "每漲1元影響點數": 0.38,
+            },
+        ]
 
-            @st.cache_data(ttl=600)
-            def get_stock_history_and_status(code):
+        calc_rows = []
+        total_impact_points = 0.0
+
+        for item in top10_weights:
+            c = item["代號"]
+            latest_px, price_change = 0.0, 0.0
+            try:
                 for suffix in [".TW", ".TWO"]:
-                    ticker_symbol = f"{code}{suffix}"
-                    try:
-                        df_hist = yf.download(
-                            ticker_symbol,
-                            period="6mo",
-                            interval="1d",
-                            progress=False,
-                        )
-                        if not df_hist.empty:
-                            if isinstance(df_hist.columns, pd.MultiIndex):
-                                df_hist.columns = df_hist.columns.droplevel(1)
-                            if "Close" in df_hist.columns and len(df_hist) > 5:
-                                return df_hist, ticker_symbol
-                    except:
-                        pass
-                return pd.DataFrame(), ""
+                    t_df = yf.download(
+                        f"{c}{suffix}",
+                        period="2d",
+                        interval="1d",
+                        progress=False,
+                    )
+                    if not t_df.empty:
+                        if isinstance(t_df.columns, pd.MultiIndex):
+                            t_df.columns = t_df.columns.droplevel(1)
+                        if "Close" in t_df.columns:
+                            latest_px = float(t_df["Close"].iloc[-1])
+                            prev_px = float(
+                                t_df["Close"].iloc[-2]
+                                if len(t_df) > 1
+                                else latest_px
+                            )
+                            price_change = round(latest_px - prev_px, 2)
+                            break
+            except:
+                pass
 
+            impact_pts = round(price_change * item["每漲1元影響點數"], 2)
+            total_impact_points += impact_pts
 
-            df_hist, ticker_symbol = get_stock_history_and_status(
-                selected_stock_code
+            calc_rows.append(
+                {
+                    "排名": item["排名"],
+                    "股票": item["股票"],
+                    "代號": c,
+                    "權重(%)": item["權重"],
+                    "最新股價": latest_px,
+                    "每漲1元影響點數": item["每漲1元影響點數"],
+                    "漲跌金額": price_change,
+                    "影響點數": impact_pts,
+                }
             )
 
-            if not df_hist.empty:
-                df_hist["HLC3"] = (
-                    df_hist["High"] + df_hist["Low"] + df_hist["Close"]
-                ) / 3
-                df_hist["Trend_Line"] = (
-                    df_hist["HLC3"].rolling(window=20).mean()
-                )
+        df_impact = pd.DataFrame(calc_rows)
+        st.dataframe(df_impact, use_container_width=True, hide_index=True)
 
-                last_row = df_hist.iloc[-1]
-                last_close = float(last_row["Close"])
-                last_hlc3_ma20 = (
-                    float(last_row["Trend_Line"])
-                    if pd.notna(last_row["Trend_Line"])
-                    else 0.0
-                )
-
-                day_above = last_close >= last_hlc3_ma20
-
-                df_weekly = (
-                    df_hist.resample("W")
-                    .agg({"High": "max", "Low": "min", "Close": "last"})
-                    .dropna()
-                )
-                if len(df_weekly) >= 20:
-                    df_weekly["W_HLC3"] = (
-                        df_weekly["High"]
-                        + df_weekly["Low"]
-                        + df_weekly["Close"]
-                    ) / 3
-                    df_weekly["W_MA20"] = (
-                        df_weekly["W_HLC3"].rolling(window=20).mean()
-                    )
-                    w_last = df_weekly.iloc[-1]
-                    week_above = (
-                        float(w_last["Close"]) >= float(w_last["W_MA20"])
-                        if pd.notna(w_last["W_MA20"])
-                        else False
-                    )
-                else:
-                    week_above = day_above
-
-                if day_above and week_above:
-                    status_badge = "🟢 雙多 (日K站上、週K站上)"
-                elif not day_above and week_above:
-                    status_badge = "🟡 長多短空 (週K站上、日K跌破)"
-                elif day_above and not week_above:
-                    status_badge = "🟠 短多長空 (日K站上、週K跌破)"
-                else:
-                    status_badge = "🔴 雙空 (日K跌破、週K跌破)"
-
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric(
-                    label="💰 最新收盤價", value=f"{round(last_close, 2)}"
-                )
-                col_m2.metric(
-                    label="📊 HLC3 20日均線",
-                    value=f"{round(last_hlc3_ma20, 2)}",
-                )
-                col_m3.metric(label="🚩 多空狀態", value=status_badge)
-
-                # ==================== 前十大權值股對加權指數影響點數計算 ====================
-                st.markdown("---")
-                st.subheader(
-                    "⚡ 前十大權值股對加權指數影響點數計算 (模擬試算)"
-                )
-
-                top10_weights = [
-                    {
-                        "排名": 1,
-                        "股票": "台積電",
-                        "代號": "2330",
-                        "權重": 44.77,
-                        "每漲1元影響點數": 8.43,
-                    },
-                    {
-                        "排名": 2,
-                        "股票": "聯發科",
-                        "代號": "2454",
-                        "權重": 4.05,
-                        "每漲1元影響點數": 0.48,
-                    },
-                    {
-                        "排名": 3,
-                        "股票": "台達電",
-                        "代號": "2308",
-                        "權重": 3.03,
-                        "每漲1元影響點數": 0.78,
-                    },
-                    {
-                        "排名": 4,
-                        "股票": "鴻海",
-                        "代號": "2317",
-                        "權重": 2.50,
-                        "每漲1元影響點數": 4.59,
-                    },
-                    {
-                        "排名": 5,
-                        "股票": "日月光投控",
-                        "代號": "3711",
-                        "權重": 1.76,
-                        "每漲1元影響點數": 1.33,
-                    },
-                    {
-                        "排名": 6,
-                        "股票": "富邦金",
-                        "代號": "2327",
-                        "權重": 1.29,
-                        "每漲1元影響點數": 4.37,
-                    },
-                    {
-                        "排名": 7,
-                        "股票": "台光電",
-                        "代號": "2303",
-                        "權重": 1.21,
-                        "每漲1元影響點數": 0.10,
-                    },
-                    {
-                        "排名": 8,
-                        "股票": "聯電",
-                        "代號": "2881",
-                        "權重": 1.08,
-                        "每漲1元影響點數": 3.91,
-                    },
-                    {
-                        "排名": 9,
-                        "股票": "國泰金",
-                        "代號": "2383",
-                        "權重": 1.06,
-                        "每漲1元影響點數": 4.79,
-                    },
-                    {
-                        "排名": 10,
-                        "股票": "欣興",
-                        "代號": "3037",
-                        "權重": 0.91,
-                        "每漲1元影響點數": 0.38,
-                    },
-                ]
-
-                calc_rows = []
-                total_impact_points = 0.0
-
-                for item in top10_weights:
-                    c = item["代號"]
-                    latest_px, price_change = 0.0, 0.0
-                    try:
-                        for suffix in [".TW", ".TWO"]:
-                            t_df = yf.download(
-                                f"{c}{suffix}",
-                                period="2d",
-                                interval="1d",
-                                progress=False,
-                            )
-                            if not t_df.empty:
-                                if isinstance(t_df.columns, pd.MultiIndex):
-                                    t_df.columns = t_df.columns.droplevel(1)
-                                if "Close" in t_df.columns:
-                                    latest_px = float(t_df["Close"].iloc[-1])
-                                    prev_px = float(
-                                        t_df["Close"].iloc[-2]
-                                        if len(t_df) > 1
-                                        else latest_px
-                                    )
-                                    price_change = round(
-                                        latest_px - prev_px, 2
-                                    )
-                                    break
-                    except:
-                        pass
-
-                    impact_pts = round(
-                        price_change * item["每漲1元影響點數"], 2
-                    )
-                    total_impact_points += impact_pts
-
-                    calc_rows.append(
-                        {
-                            "排名": item["排名"],
-                            "股票": item["股票"],
-                            "代號": c,
-                            "權重(%)": item["權重"],
-                            "最新股價": latest_px,
-                            "每漲1元影響點數": item["每漲1元影響點數"],
-                            "漲跌金額": price_change,
-                            "影響點數": impact_pts,
-                        }
-                    )
-
-                df_impact = pd.DataFrame(calc_rows)
-                st.dataframe(df_impact, use_container_width=True, hide_index=True)
-
-                st.metric(
-                    label="📊 前十大權值股總影響點數",
-                    value=f"{round(total_impact_points, 2)} 點",
-                )
-            else:
-                st.info("目前無法取得該股票的歷史資料。")
+        st.metric(
+            label="📊 前十大權值股總影響點數",
+            value=f"{round(total_impact_points, 2)} 點",
+        )

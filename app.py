@@ -126,46 +126,57 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """直接整張抓取集保 1-5 檔，取出最大級別（千張大戶）比例並回傳對應字典"""
+  """全自動抓取集保 1-5 檔，使用絕對索引直接對應千張大戶比例"""
   tdcc_dict = {}
   try:
     url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
-    res = requests.get(url, timeout=15)
+    res = requests.get(url, timeout=20)
     if res.status_code == 200:
-      try:
-        df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="utf-8-sig")
-      except:
-        df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="big5")
+      # 嘗試不同編碼讀取
+      for enc in ["utf-8-sig", "big5", "cp950"]:
+        try:
+          df_tdcc = pd.read_csv(
+              io.BytesIO(res.content), encoding=enc, dtype=str
+          )
+          if len(df_tdcc.columns) >= 5:
+            break
+        except:
+          continue
 
-      # 清理欄位名稱
+      # 清理所有欄位名稱的空白與特殊符號
       df_tdcc.columns = [
           str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
       ]
 
-      # 找出代號、級別、比例對應欄位
+      # 集保格式通常為：[證券代號, 資料日期, 等級別, 人數, 股數, 占集保庫存數比例(%)]
       col_code = df_tdcc.columns[0]
       col_level = df_tdcc.columns[2]
-      col_ratio = df_tdcc.columns[-1]
+      col_ratio = df_tdcc.columns[-1]  # 通常最後一欄就是比例
 
-      # 強制將代號轉為純 4 碼字串，級別轉數字
+      # 徹底洗淨代號，只留下純數字並補齊 4 碼
       df_tdcc["clean_code"] = (
-          df_tdcc[col_code].astype(str).str.strip().str.zfill(4)
+          df_tdcc[col_code]
+          .astype(str)
+          .str.replace(r"\D", "", regex=True)
+          .str.zfill(4)
       )
-      df_tdcc[col_level] = pd.to_numeric(df_tdcc[col_level], errors="coerce")
+      df_tdcc["level_num"] = pd.to_numeric(
+          df_tdcc[col_level], errors="coerce"
+      )
+      df_tdcc["ratio_num"] = pd.to_numeric(
+          df_tdcc[col_ratio].str.replace(",", ""), errors="coerce"
+      )
 
-      # 過濾出每一檔股票的最大級別（即千張以上大戶）
-      max_levels = df_tdcc.groupby("clean_code")[col_level].transform("max")
-      df_big = df_tdcc[df_tdcc[col_level] == max_levels]
+      # 抓出每一檔股票「等級別」數字最大的那一列（即最高級距：千張以上大戶）
+      idx_max = df_tdcc.groupby("clean_code")["level_num"].idxmax()
+      df_big = df_tdcc.loc[idx_max]
 
       for _, row in df_big.iterrows():
-        c_key = row["clean_code"]
-        if len(c_key) >= 4:
-          c_4 = c_key[-4:]
-          try:
-            val = float(str(row[col_ratio]).replace(",", ""))
-            tdcc_dict[c_4] = val
-          except:
-            continue
+        code_4 = row["clean_code"][-4:]
+        val = row["ratio_num"]
+        if len(code_4) == 4 and code_4.isdigit() and not pd.isna(val):
+          tdcc_dict[code_4] = float(val)
+
   except Exception as e:
     print(f"TDCC error: {e}")
 
@@ -190,6 +201,9 @@ if latest_date:
   st.sidebar.success(
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
+  st.sidebar.info(
+      f"📊 集保大戶資料庫已載入：共對應 {len(tdcc_big_holders)} 檔股票"
+  )
 else:
   st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
 
@@ -202,8 +216,9 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    # 完整對應千張大戶比例
-    big_holder_pct = tdcc_big_holders.get(str(code).strip().zfill(4), 0.0)
+    # 絕對對應
+    clean_c = str(code).strip().zfill(4)
+    big_holder_pct = tdcc_big_holders.get(clean_c, 0.0)
 
     base_rows.append(
         {

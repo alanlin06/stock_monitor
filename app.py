@@ -29,7 +29,7 @@ def fetch_twse_data():
   curr = datetime.now()
   dates = []
 
-  # 自動往前尋找最近的 25 個交易日 (即便今天沒開盤或還沒更新，也會自動找最近有資料的日期)
+  # 自動往前尋找最近的 25 個交易日
   while len(dates) < 25 and (datetime.now() - curr).days < 60:
     if curr.weekday() < 5:  # 排除週末
       d_str = curr.strftime("%Y%m%d")
@@ -45,7 +45,7 @@ def fetch_twse_data():
     curr -= timedelta(days=1)
 
   if not dates:
-    return {}, {}, {}, [], ""
+    return {}, {}, {}, [], []
 
   latest_date = dates[0]
 
@@ -116,7 +116,6 @@ def fetch_twse_data():
       latest_trust_shares,
       hist_foreign_shares,
       dates,
-      latest_date,
   )
 
 
@@ -127,8 +126,10 @@ with st.spinner("⏳ 正在自動對齊最新交易日，同步外資與投信�
       latest_trust_shares,
       hist_foreign_shares,
       target_dates,
-      latest_date,
   ) = fetch_twse_data()
+
+# 取得最新日期顯示
+latest_date = target_dates[0] if target_dates else ""
 
 if latest_date:
   st.sidebar.success(

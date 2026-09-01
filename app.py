@@ -126,7 +126,7 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """從集保中心抓取最新一週的千張大戶持股比例 CSV 資料"""
+  """強固版：從集保中心抓取最新一週的千張大戶持股比例"""
   tdcc_dict = {}
   try:
     url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1C"
@@ -135,28 +135,38 @@ def fetch_tdcc_data():
       df_tdcc = pd.read_csv(io.StringIO(res.text))
       df_tdcc.columns = [c.strip() for c in df_tdcc.columns]
 
-      code_col = [
-          c
-          for c in df_tdcc.columns
-          if "代號" in c or "證券代號" in c or "Code" in c
-      ]
-      level_col = [c for c in df_tdcc.columns if "級別" in c or "level" in c.lower()]
-      ratio_col = [
-          c for c in df_tdcc.columns if "比例" in c or "percent" in c.lower()
-      ]
+      # 印出欄位協助除錯或確保萬無一失
+      # 集保常見欄位：證券代號, 統計日期, 持股級別, 人數, 持股數, 占集保庫存數比例％
+      code_col = next(
+          (
+              c
+              for c in df_tdcc.columns
+              if "代號" in c or "證券" in c or "Code" in c
+          ),
+          None,
+      )
+      level_col = next(
+          (c for c in df_tdcc.columns if "級別" in c or "level" in c.lower()),
+          None,
+      )
+      ratio_col = next(
+          (
+              c
+              for c in df_tdcc.columns
+              if "比例" in c or "percent" in c.lower() or "％" in c
+          ),
+          None,
+      )
 
       if code_col and level_col and ratio_col:
-        c_col = code_col[0]
-        l_col = level_col[0]
-        r_col = ratio_col[0]
-
-        max_level = df_tdcc[l_col].max()
-        df_big = df_tdcc[df_tdcc[l_col] == max_level]
+        # 通常集保級別 15 或 16 或最大數字代表 1000張以上大戶
+        max_level = df_tdcc[level_col].max()
+        df_big = df_tdcc[df_tdcc[level_col] == max_level]
 
         for _, row in df_big.iterrows():
-          code = str(row[c_col]).strip()
+          code = str(row[code_col]).strip()
           try:
-            ratio = float(str(row[r_col]).replace(",", ""))
+            ratio = float(str(row[ratio_col]).replace(",", ""))
             tdcc_dict[code] = ratio
           except Exception:
             continue
@@ -195,6 +205,8 @@ if market_dict:
     close_p = info["收盤價"]
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
+
+    # 抓取大戶持股比例，若找不到則給 NaN 或 0.0
     big_holder_pct = tdcc_big_holders.get(code, 0.0)
 
     base_rows.append(
@@ -285,7 +297,6 @@ if market_dict:
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
-    # 交叉比對表直接改用「外本比(%)」來排序
     df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
@@ -323,7 +334,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表純粹呈現 **外本比(%)**、**投本比(%)** 以及集保中心 **【千張大戶比例(%)】**。"
+          "💡 此表呈現 **外本比(%)**、**投本比(%)** 以及集保中心 **【千張大戶比例(%)】**。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

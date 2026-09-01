@@ -25,7 +25,6 @@ def load_db():
         return json.load(f)
     except Exception:
       pass
-  # 預設初始值
   return {
       "2330": "半導體(晶圓代工)",
       "3711": "半導體(封測)",
@@ -45,7 +44,6 @@ def save_db(db_data):
     st.error(f"儲存檔案失敗: {e}")
 
 
-# 初始化對應表
 if "user_industry_map" not in st.session_state:
   st.session_state.user_industry_map = load_db()
 
@@ -297,6 +295,50 @@ if market_dict:
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
+    # ==================== 計算族群平均集中度統計 ====================
+    df_all_calculated = enrich_data(df_market)
+    df_grouped_raw = df_all_calculated[
+        df_all_calculated["族群"].str.strip() != ""
+    ]
+
+    if not df_grouped_raw.empty:
+      df_industry_summary = (
+          df_grouped_raw.groupby("族群")
+          .agg(
+              股票檔數=("代號", "count"),
+              平均外本比_％=("外本比(%)", "mean"),
+              平均投本比_％=("投本比(%)", "mean"),
+              平均雙法人總集中度_％=("雙法人總集中度(%)", "mean"),
+          )
+          .reset_index()
+      )
+
+      df_industry_summary["平均外本比_％"] = df_industry_summary[
+          "平均外本比_％"
+      ].round(3)
+      df_industry_summary["平均投本比_％"] = df_industry_summary[
+          "平均投本比_％"
+      ].round(3)
+      df_industry_summary["平均雙法人總集中度_％"] = df_industry_summary[
+          "平均雙法人總集中度_％"
+      ].round(3)
+
+      df_industry_summary = df_industry_summary.sort_values(
+          by="平均雙法人總集中度_％", ascending=False
+      )
+      df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
+    else:
+      df_industry_summary = pd.DataFrame(
+          columns=[
+              "排名",
+              "族群",
+              "股票檔數",
+              "平均外本比_％",
+              "平均投本比_％",
+              "平均雙法人總集中度_％",
+          ]
+      )
+
     # ==================== 搜尋與過濾面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
     col_input, _ = st.columns([1, 3])
@@ -321,17 +363,34 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    tab_cross, tab_top50, tab_top100 = st.tabs(
+    tab_ind_summary, tab_cross, tab_top50, tab_top100 = st.tabs(
         [
+            "📈 族群籌碼平均排行",
             "🎯 雙榜交叉比對",
             "🔥 外資買賣超 Top 50",
             "💰 成交值 Top 100",
         ]
     )
 
+    with tab_ind_summary:
+      st.info(
+          "💡 **族群平均分析說明**：系統會自動抓取您所有「已分類族群」的股票，將它們的 **外本比** 與 **雙法人總集中度** 進行平均計算，幫您找出目前盤面上最強勢的產業族群！"
+      )
+      if not df_industry_summary.empty:
+        st.dataframe(
+            df_industry_summary,
+            use_container_width=True,
+            hide_index=True,
+            height=500,
+        )
+      else:
+        st.warning(
+            "目前尚未在任何股票填寫族群名稱。請先在其他分頁的「族群」欄位打字並儲存，這裡就會自動幫你算出各族群平均囉！"
+        )
+
     with tab_cross:
       st.info(
-          "💡 **操作說明**：在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中，以後重新整理或重啟程式都不會消失！"
+          "💡 **操作說明**：在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中！"
       )
 
       edited_df_cross = st.data_editor(
@@ -356,11 +415,11 @@ if market_dict:
           else:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
-        # 寫入硬碟 JSON 檔
         save_db(st.session_state.user_industry_map)
         st.success(
             "🎉 族群資料已成功寫入硬碟檔案！重新整理或重開程式都會完美記憶！"
         )
+        st.rerun()
 
     with tab_top50:
       edited_df_top50 = st.data_editor(
@@ -386,6 +445,7 @@ if market_dict:
               del st.session_state.user_industry_map[c]
         save_db(st.session_state.user_industry_map)
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
+        st.rerun()
 
     with tab_top100:
       edited_df_top100 = st.data_editor(
@@ -411,6 +471,7 @@ if market_dict:
               del st.session_state.user_industry_map[c]
         save_db(st.session_state.user_industry_map)
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
+        st.rerun()
 
 else:
   st.info("💡 提示：請重新整理頁面以順利載入資料。")

@@ -53,24 +53,23 @@ def fetch_twse_data():
 
   latest_date = dates[0]
 
-  # ==================== 💡 在這裡自訂你的專屬族群清單 ====================
-  # 格式：「股票代號": "你想要的族群中文名稱"
-  # 只要在這裡填入你想自訂的股票，就會優先顯示！
+  # ==================== 💡 【您的專屬族群記憶庫】 ====================
+  # 您可以在這裡自由地將股票代號對應到您想要的族群名稱。
+  # 沒填寫的股票，族群欄位就會保持空白，讓您隨時可以自由定義！
   custom_industry_map = {
       "2330": "半導體(晶圓代工)",
       "3711": "半導體(封測)",
       "2449": "半導體(封測)",
-      "3231": "AI伺服器/電腦",
-      "2382": "AI伺服器/電腦",
-      "2356": "AI伺服器/電腦",
+      "2382": "AI伺服器",
+      "3231": "AI伺服器",
+      "2356": "AI伺服器",
       "6669": "AI伺服器/矽智財",
-      # 你可以隨時在這邊繼續自行增加...
+      # 格式範例： "您的股票代號": "您想要的族群名稱",
   }
 
-  # 透過 MI_INDEX 同步收盤價、發行股數，並正確解析官方中文產業名稱
+  # 僅透過 MI_INDEX 單純同步收盤價與發行股數，不抓取官方雜亂的產業名稱
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
-  current_industry = "其他"
 
   try:
     res = requests.get(mi_url, headers=headers, timeout=8)
@@ -78,19 +77,6 @@ def fetch_twse_data():
       data = res.json()
       if data.get("stat") == "OK":
         for table in data.get("tables", []):
-          t_title = table.get("title", "")
-          # 修正：抓取表格標題中的中文產業名稱（例如 "24. 半導體業" -> "半導體業"）
-          if "." in t_title:
-            parts = t_title.split(".", 1)
-            if len(parts) > 1:
-              sub_title = parts[1].strip()
-              if sub_title and not sub_title.startswith("日"):
-                current_industry = sub_title
-          elif " " in t_title:
-            parts = t_title.split(" ", 1)
-            if len(parts) > 1:
-              current_industry = parts[1].strip()
-
           if "data" in table:
             for row in table["data"]:
               if len(row) > 10:
@@ -103,17 +89,14 @@ def fetch_twse_data():
                     )
                     close_price = float(row[8].replace(",", ""))
 
-                    # 優先檢查是否有自訂族群，若無則用官方解析出的中文產業
-                    if code in custom_industry_map:
-                      official_ind = custom_industry_map[code]
-                    else:
-                      official_ind = current_industry
+                    # 如果在您的記憶庫有找到就填入，沒有就保持空白 ""
+                    assigned_ind = custom_industry_map.get(code, "")
 
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
-                        "官方產業": official_ind,
+                        "自訂族群": assigned_ind,
                     }
                   except Exception:
                     continue
@@ -159,7 +142,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在同步證交所官方與自訂族群資料中..."):
+with st.spinner("⏳ 正在載入台股籌碼與您的自訂族群記憶..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -197,7 +180,7 @@ if market_dict:
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
             "投信買賣超張數": t_shares / 1000,
-            "官方產業": info.get("官方產業", "其他"),
+            "族群": info.get("自訂族群", ""),
         }
     )
 
@@ -220,7 +203,6 @@ if market_dict:
           axis=1,
       )
 
-      # 核心計算：外本比 + 投本比 總集中度
       df["雙法人總集中度(%)"] = round(df["外本比(%)"] + df["投本比(%)"], 3)
 
       def calc_20d_metrics(code):
@@ -236,9 +218,6 @@ if market_dict:
         return active_streak
 
       df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
-
-      # 族群欄位對應
-      df["族群"] = df["官方產業"]
 
       def format_display_name(row):
         name = row["官方名稱"]
@@ -260,7 +239,7 @@ if market_dict:
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
 
-      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」強制移至最後一欄
+      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」強制移至最後一欄保持空白可供記憶
       cols = list(df.columns)
       if "雙法人總集中度(%)" in cols:
         cols.remove("雙法人總集中度(%)")
@@ -337,7 +316,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 提示：現在未自訂的股票會直接顯示**正確的中文產業名稱**（如金融保險業、半導體業等），而你有在程式碼中 `custom_industry_map` 填入的股票則會優先顯示你自訂的中文名稱，且「族群」欄位固定在最後一欄！"
+          "💡 **族群記憶庫使用說明**：最後一欄「族群」現在完全由您掌控！如果您想幫某檔股票分類，只要在程式碼上方的 `custom_industry_map = {}` 裡面直接 KEY 入 `\"股票代號\": \"您要的族群\"`，存檔後下次抓資料就會永遠記住囉！"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

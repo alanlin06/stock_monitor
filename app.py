@@ -126,48 +126,37 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """強固版：從集保中心抓取最新一週的千張大戶持股比例"""
+  """強固防禦版：直接抓取集保 1C 資料並對應千張大戶比例"""
   tdcc_dict = {}
   try:
     url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1C"
-    res = requests.get(url, timeout=10)
+    res = requests.get(url, timeout=15)
     if res.status_code == 200:
       df_tdcc = pd.read_csv(io.StringIO(res.text))
-      df_tdcc.columns = [c.strip() for c in df_tdcc.columns]
+      # 清理欄位名稱前後空白
+      df_tdcc.columns = [
+          str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
+      ]
 
-      # 印出欄位協助除錯或確保萬無一失
-      # 集保常見欄位：證券代號, 統計日期, 持股級別, 人數, 持股數, 占集保庫存數比例％
-      code_col = next(
-          (
-              c
-              for c in df_tdcc.columns
-              if "代號" in c or "證券" in c or "Code" in c
-          ),
-          None,
-      )
-      level_col = next(
-          (c for c in df_tdcc.columns if "級別" in c or "level" in c.lower()),
-          None,
-      )
-      ratio_col = next(
-          (
-              c
-              for c in df_tdcc.columns
-              if "比例" in c or "percent" in c.lower() or "％" in c
-          ),
-          None,
-      )
+      # 通常集保 CSV 欄位依序為： 證券代號, 統計日期, 持股級別, 人數, 持股數, 占比例(%)
+      # 我們直接取第 1 欄當代號、第 3 欄當級別、最後一欄當比例
+      col_names = df_tdcc.columns.tolist()
+      if len(col_names) >= 6:
+        c_col = col_names[0]  # 證券代號
+        l_col = col_names[2]  # 持股級別
+        r_col = col_names[-1]  # 比例％ (通常在最後一欄)
 
-      if code_col and level_col and ratio_col:
-        # 通常集保級別 15 或 16 或最大數字代表 1000張以上大戶
-        max_level = df_tdcc[level_col].max()
-        df_big = df_tdcc[df_tdcc[level_col] == max_level]
+        # 轉換級別為數字以便找出最大值 (千張大戶)
+        df_tdcc[l_col] = pd.to_numeric(df_tdcc[l_col], errors="coerce")
+        max_level = df_tdcc[l_col].max()
+
+        df_big = df_tdcc[df_tdcc[l_col] == max_level]
 
         for _, row in df_big.iterrows():
-          code = str(row[code_col]).strip()
+          code = str(row[c_col]).strip()
           try:
-            ratio = float(str(row[ratio_col]).replace(",", ""))
-            tdcc_dict[code] = ratio
+            ratio_val = float(str(row[r_col]).replace(",", ""))
+            tdcc_dict[code] = ratio_val
           except Exception:
             continue
   except Exception as e:
@@ -206,7 +195,7 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    # 抓取大戶持股比例，若找不到則給 NaN 或 0.0
+    # 取得千張大戶持股比例
     big_holder_pct = tdcc_big_holders.get(code, 0.0)
 
     base_rows.append(

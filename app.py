@@ -167,6 +167,32 @@ if market_dict:
 
   if not df_market.empty:
 
+    def get_industry_group(code):
+      # 簡單以台股代號區段或特徵簡易歸類產業族群
+      c = int(code) if code.isdigit() else 0
+      if 2300 <= c <= 2499 or 3000 <= c <= 3399 or 3500 <= c <= 3799:
+        return "電子科技"
+      elif 2800 <= c <= 2899:
+        return "金融保險"
+      elif 1300 <= c <= 1399:
+        return "塑膠化工"
+      elif 2000 <= c <= 2099:
+        return "鋼鐵工業"
+      elif 2100 <= c <= 2199:
+        return "橡膠工業"
+      elif 2200 <= c <= 2299:
+        return "汽車工業"
+      elif 2500 <= c <= 2599 or 5500 <= c <= 5599:
+        return "營建營造"
+      elif 2600 <= c <= 2699:
+        return "航運類股"
+      elif 2900 <= c <= 2999:
+        return "百貨零售"
+      elif 9900 <= c <= 9999:
+        return "其他產業"
+      else:
+        return "傳產與其他"
+
     def enrich_data(df):
       df = df.copy()
       df["外本比(%)"] = df.apply(
@@ -199,6 +225,9 @@ if market_dict:
 
       df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
 
+      # 新增：族群欄位
+      df["族群"] = df["代號"].apply(get_industry_group)
+
       def format_display_name(row):
         name = row["官方名稱"]
         f_net = row["外資買賣超股數"]
@@ -219,15 +248,18 @@ if market_dict:
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
 
-      # 調整欄位順序，把「雙法人總集中度(%)」拉到最前面方便對齊觀看
+      # 調整欄位順序：把「雙法人總集中度(%)」放前面，「族群」移到最後面
       cols = list(df.columns)
       if "雙法人總集中度(%)" in cols:
         cols.remove("雙法人總集中度(%)")
-        # 放到「外本比(%)」前面
         idx = cols.index("外本比(%)") if "外本比(%)" in cols else 0
         cols.insert(idx, "雙法人總集中度(%)")
-        df = df[cols]
 
+      if "族群" in cols:
+        cols.remove("族群")
+        cols.append("族群")  # 確保「族群」放在最後面
+
+      df = df[cols]
       return df
 
     df_all_enriched = enrich_data(df_market)
@@ -293,7 +325,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表呈現 **【雙法人總集中度(%)】**（外本比 + 投本比總和）、各別比重、連續買超天數，並自動按總集中度由高到低排序。"
+          "💡 此表呈現 **【雙法人總集中度(%)】**、連續買超天數，並在最後一欄附上 **【族群】** 分類，方便快速辨識產業。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

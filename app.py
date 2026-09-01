@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+import json
+import os
 import pandas as pd
 import requests
 import streamlit as st
@@ -12,10 +14,19 @@ st.set_page_config(
 
 st.title("台股籌碼集中度 (外本比、投本比與強勢股追蹤)")
 
-# ==================== 初始化 Session State (記憶庫) ====================
-if "user_industry_map" not in st.session_state:
-  # 預設的一些初始對應，您可以直接在畫面或這裡修改
-  st.session_state.user_industry_map = {
+# ==================== 本地 JSON 檔案持久化記憶功能 ====================
+DB_FILE = "industry_db.json"
+
+
+def load_db():
+  if os.path.exists(DB_FILE):
+    try:
+      with open(DB_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+    except Exception:
+      pass
+  # 預設初始值
+  return {
       "2330": "半導體(晶圓代工)",
       "3711": "半導體(封測)",
       "2449": "半導體(封測)",
@@ -24,6 +35,19 @@ if "user_industry_map" not in st.session_state:
       "2356": "AI伺服器",
       "6669": "AI伺服器/矽智財",
   }
+
+
+def save_db(db_data):
+  try:
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+      json.dump(db_data, f, ensure_ascii=False, indent=4)
+  except Exception as e:
+    st.error(f"儲存檔案失敗: {e}")
+
+
+# 初始化對應表
+if "user_industry_map" not in st.session_state:
+  st.session_state.user_industry_map = load_db()
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -135,7 +159,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與您的自訂族群記憶..."):
+with st.spinner("⏳ 正在載入台股籌碼與您的專屬族群資料..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -162,7 +186,6 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    # 從記憶庫中取出對應的族群，沒有就給空白
     assigned_ind = st.session_state.user_industry_map.get(code, "")
 
     base_rows.append(
@@ -274,7 +297,7 @@ if market_dict:
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 頁面頂部：即時搜尋篩選面板 ====================
+    # ==================== 搜尋與過濾面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
     col_input, _ = st.columns([1, 3])
     with col_input:
@@ -297,7 +320,7 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 (改為可編輯表格) ====================
+    # ==================== 分頁顯示排行榜 ====================
     tab_cross, tab_top50, tab_top100 = st.tabs(
         [
             "🎯 雙榜交叉比對",
@@ -308,10 +331,9 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 **操作說明**：您可以直接在下方表格最後一欄的「族群」空格中**點兩下直接打字**！打完後點擊表格下方的「💾 儲存我的族群修改」按鈕，系統就會幫您記住。"
+          "💡 **操作說明**：在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中，以後重新整理或重啟程式都不會消失！"
       )
 
-      # 使用 st.data_editor 讓「族群」欄位可以直接編輯
       edited_df_cross = st.data_editor(
           df_cross,
           use_container_width=True,
@@ -321,12 +343,11 @@ if market_dict:
               col
               for col in df_cross.columns
               if col != "族群" and col != "排序"
-          ],  # 只有「族群」可以修改
+          ],
           key="editor_cross",
       )
 
-      if st.button("💾 儲存我的族群修改", type="primary"):
-        # 將修改後的結果更新回 session_state 記憶庫
+      if st.button("💾 儲存並寫入永久檔案 (交叉比對)", type="primary"):
         for _, row in edited_df_cross.iterrows():
           c = row["代號"]
           ind = row["族群"]
@@ -335,7 +356,11 @@ if market_dict:
           else:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
-        st.success("🎉 族群修改已成功儲存！重新整理或切換分頁後依然有效！")
+        # 寫入硬碟 JSON 檔
+        save_db(st.session_state.user_industry_map)
+        st.success(
+            "🎉 族群資料已成功寫入硬碟檔案！重新整理或重開程式都會完美記憶！"
+        )
 
     with tab_top50:
       edited_df_top50 = st.data_editor(
@@ -350,7 +375,7 @@ if market_dict:
           ],
           key="editor_top50",
       )
-      if st.button("💾 儲存 Top50 族群修改", type="secondary"):
+      if st.button("💾 儲存並寫入永久檔案 (Top 50)", type="secondary"):
         for _, row in edited_df_top50.iterrows():
           c = row["代號"]
           ind = row["族群"]
@@ -359,7 +384,8 @@ if market_dict:
           else:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
-        st.success("🎉 族群修改已成功儲存！")
+        save_db(st.session_state.user_industry_map)
+        st.success("🎉 族群資料已成功寫入硬碟檔案！")
 
     with tab_top100:
       edited_df_top100 = st.data_editor(
@@ -374,7 +400,7 @@ if market_dict:
           ],
           key="editor_top100",
       )
-      if st.button("💾 儲存 Top100 族群修改", type="secondary"):
+      if st.button("💾 儲存並寫入永久檔案 (Top 100)", type="secondary"):
         for _, row in edited_df_top100.iterrows():
           c = row["代號"]
           ind = row["族群"]
@@ -383,7 +409,8 @@ if market_dict:
           else:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
-        st.success("🎉 族群修改已成功儲存！")
+        save_db(st.session_state.user_industry_map)
+        st.success("🎉 族群資料已成功寫入硬碟檔案！")
 
 else:
   st.info("💡 提示：請重新整理頁面以順利載入資料。")

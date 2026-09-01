@@ -126,36 +126,54 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """強固防禦版：直接抓取集保 1C 資料並對應千張大戶比例"""
+  """終極強固版：動能比對與自動欄位對應集保千張大戶資料"""
   tdcc_dict = {}
   try:
     url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1C"
     res = requests.get(url, timeout=15)
     if res.status_code == 200:
-      df_tdcc = pd.read_csv(io.StringIO(res.text))
-      # 清理欄位名稱前後空白
+      df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="big5")
+      # 清理欄位名稱
       df_tdcc.columns = [
           str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
       ]
 
-      # 通常集保 CSV 欄位依序為： 證券代號, 統計日期, 持股級別, 人數, 持股數, 占比例(%)
-      # 我們直接取第 1 欄當代號、第 3 欄當級別、最後一欄當比例
-      col_names = df_tdcc.columns.tolist()
-      if len(col_names) >= 6:
-        c_col = col_names[0]  # 證券代號
-        l_col = col_names[2]  # 持股級別
-        r_col = col_names[-1]  # 比例％ (通常在最後一欄)
+      # 尋找代號、級別、比例的對應欄位名稱
+      col_code = next(
+          (c for c in df_tdcc.columns if "代號" in c or "Code" in c),
+          df_tdcc.columns[0],
+      )
+      col_level = next(
+          (c for c in df_tdcc.columns if "級別" in c or "level" in c.lower()),
+          df_tdcc.columns[2] if len(df_tdcc.columns) > 2 else None,
+      )
+      col_ratio = next(
+          (
+              c
+              for c in df_tdcc.columns
+              if "比例" in c or "percent" in c.lower() or "％" in c
+          ),
+          df_tdcc.columns[-1],
+      )
 
-        # 轉換級別為數字以便找出最大值 (千張大戶)
-        df_tdcc[l_col] = pd.to_numeric(df_tdcc[l_col], errors="coerce")
-        max_level = df_tdcc[l_col].max()
+      if col_code and col_level and col_ratio:
+        df_tdcc[col_level] = pd.to_numeric(
+            df_tdcc[col_level], errors="coerce"
+        )
+        # 過濾掉特殊級別（如合計、調整數等），通常 15 級或數字最大的為千張以上大戶
+        valid_levels = df_tdcc[df_tdcc[col_level] < 16]
+        max_level = (
+            valid_levels[col_level].max()
+            if not valid_levels.empty
+            else df_tdcc[col_level].max()
+        )
 
-        df_big = df_tdcc[df_tdcc[l_col] == max_level]
+        df_big = df_tdcc[df_tdcc[col_level] == max_level]
 
         for _, row in df_big.iterrows():
-          code = str(row[c_col]).strip()
+          code = str(row[col_code]).strip().zfill(4)
           try:
-            ratio_val = float(str(row[r_col]).replace(",", ""))
+            ratio_val = float(str(row[col_ratio]).replace(",", ""))
             tdcc_dict[code] = ratio_val
           except Exception:
             continue
@@ -195,8 +213,11 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    # 取得千張大戶持股比例
-    big_holder_pct = tdcc_big_holders.get(code, 0.0)
+    # 確保代號對應安全
+    big_holder_pct = tdcc_big_holders.get(
+        str(code).strip().zfill(4),
+        tdcc_big_holders.get(str(code).strip(), 0.0),
+    )
 
     base_rows.append(
         {

@@ -182,6 +182,9 @@ if market_dict:
           axis=1,
       )
 
+      # 核心計算：外本比 + 投本比 總集中度
+      df["雙法人總集中度(%)"] = round(df["外本比(%)"] + df["投本比(%)"], 3)
+
       def calc_20d_metrics(code):
         active_streak = 0
         for d_str in target_dates:
@@ -215,6 +218,16 @@ if market_dict:
           return name
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
+
+      # 調整欄位順序，把「雙法人總集中度(%)」拉到最前面方便對齊觀看
+      cols = list(df.columns)
+      if "雙法人總集中度(%)" in cols:
+        cols.remove("雙法人總集中度(%)")
+        # 放到「外本比(%)」前面
+        idx = cols.index("外本比(%)") if "外本比(%)" in cols else 0
+        cols.insert(idx, "雙法人總集中度(%)")
+        df = df[cols]
+
       return df
 
     df_all_enriched = enrich_data(df_market)
@@ -226,8 +239,8 @@ if market_dict:
         .head(50)
     )
     df_top50 = enrich_data(df_f_buy)
-    df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
-    df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
+    df_top50 = df_top50.sort_values(by="雙法人總集中度(%)", ascending=False)
+    df_top50.insert(0, "排名", range(1, len(df_top50) + 1))
 
     # 2. 成交值 Top 100
     df_t_100 = df_market.sort_values(
@@ -243,7 +256,7 @@ if market_dict:
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
-    df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
+    df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
     # ==================== 頁面頂部：即時搜尋篩選面板 ====================
@@ -280,7 +293,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表呈現 **外本比(%)**、**投本比(%)** 以及連續買超天數，並自動標註雙A合擊強勢股。"
+          "💡 此表呈現 **【雙法人總集中度(%)】**（外本比 + 投本比總和）、各別比重、連續買超天數，並自動按總集中度由高到低排序。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

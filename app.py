@@ -197,8 +197,8 @@ if market_dict:
       choices = [1.5, 1.0]
       df["市值權重係數"] = np.select(conditions, choices, default=0.7)
 
-      # 3. 綜合籌碼動能總分計算 (外本比佔 40%、投本比佔 60% * 市值權重)
-      base_chip_score = (df["外本比(%)"] * 0.4) + (df["投本比(%)"] * 0.6)
+      # 3. 綜合籌碼動能總分計算 (外本比佔 50%、投本比佔 50% * 市值權重)
+      base_chip_score = (df["外本比(%)"] * 0.5) + (df["投本比(%)"] * 0.5)
       df["綜合籌碼動能總分"] = round(base_chip_score * df["市值權重係數"], 2)
 
       # 4. 根據總分自動產生最終動能顯示名稱
@@ -313,7 +313,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表已自動套用 **外本比 + 投本比 + 市值加權影響係數**，並於最右側呈現「最終籌碼動能顯示名稱」。"
+          "💡 此表已自動套用 **外本比(50%) + 投本比(50%) + 市值加權影響係數**，並於最右側呈現「最終籌碼動能顯示名稱」。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

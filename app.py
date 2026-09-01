@@ -53,10 +53,39 @@ def fetch_twse_data():
 
   latest_date = dates[0]
 
-  # 透過 MI_INDEX 精準抓取證交所官方細分產業（如：半導體業、電腦及週邊設備業等）
+  # 1. 抓取官方上市股票代號與產業別對照表
+  industry_map = {}
+  try:
+    stock_info_url = "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+    res_info = requests.get(stock_info_url, headers=headers, timeout=5)
+    if res_info.status_code == 200:
+      info_list = res_info.json()
+      for item in info_list:
+        code = item.get("公司代號", "").strip()
+        ind = item.get("產業別", "").strip()
+        if code and ind:
+          industry_map[code] = ind
+  except Exception:
+    pass
+
+  # ==================== 💡 在這裡自訂你的專屬族群清單 ====================
+  # 格式：「股票代號": "你想要的族群名稱"
+  # 如果有新增或修改，直接加在下方即可，優先權最高！
+  custom_industry_map = {
+      "2330": "半導體(晶圓代工)",
+      "2371": "半導體(封測)",
+      "3711": "半導體(封測)",
+      "2449": "半導體(封測)",
+      "3231": "AI伺服器/電腦",
+      "2382": "AI伺服器/電腦",
+      "2356": "AI伺服器/電腦",
+      "6669": "AI伺服器/矽智財",
+      # 你可以隨時在這邊繼續自行增加...
+  }
+
+  # 2. 透過 MI_INDEX 同步收盤價與發行股數
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
-  current_industry = "其他"
 
   try:
     res = requests.get(mi_url, headers=headers, timeout=8)
@@ -64,19 +93,6 @@ def fetch_twse_data():
       data = res.json()
       if data.get("stat") == "OK":
         for table in data.get("tables", []):
-          t_title = table.get("title", "")
-          # 證交所表格標題例如 "24. 半導體業" 或 "27. 電子零組件業"
-          if "." in t_title:
-            parts = t_title.split(".", 1)
-            if len(parts) > 1:
-              sub_title = parts[1].strip()
-              if sub_title:
-                current_industry = sub_title
-          elif " " in t_title:
-            parts = t_title.split(" ", 1)
-            if len(parts) > 1:
-              current_industry = parts[1].strip()
-
           if "data" in table:
             for row in table["data"]:
               if len(row) > 10:
@@ -89,11 +105,17 @@ def fetch_twse_data():
                     )
                     close_price = float(row[8].replace(",", ""))
 
+                    # 優先檢查是否有自訂族群，若無則用官方產業
+                    if code in custom_industry_map:
+                      official_ind = custom_industry_map[code]
+                    else:
+                      official_ind = industry_map.get(code, "其他")
+
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
-                        "官方產業": current_industry,
+                        "官方產業": official_ind,
                     }
                   except Exception:
                     continue
@@ -139,7 +161,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在同步證交所官方細分產業與法人籌碼資料中..."):
+with st.spinner("⏳ 正在同步證交所官方與自訂族群籌碼資料中..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -217,7 +239,7 @@ if market_dict:
 
       df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
 
-      # 族群欄位：直接對應證交所細分次產業 (如 半導體業、電腦及週邊設備業等)
+      # 族群欄位對應
       df["族群"] = df["官方產業"]
 
       def format_display_name(row):
@@ -240,7 +262,7 @@ if market_dict:
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
 
-      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」移至最後面
+      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」強制移至最後一欄
       cols = list(df.columns)
       if "雙法人總集中度(%)" in cols:
         cols.remove("雙法人總集中度(%)")
@@ -317,7 +339,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表的最後一欄現在會顯示精細的**次產業類別**（例如：半導體業、電腦及週邊設備業、電子零組件業等）。"
+          "💡 提示：程式已啟用自訂族群對應，並將**「族群」欄位固定在表格最後一欄**。你可以隨時在程式碼中的 `custom_industry_map` 自行擴充想分類的股票！"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

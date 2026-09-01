@@ -22,8 +22,15 @@ search_query = st.sidebar.text_input(
 
 @st.cache_data(ttl=600)
 def fetch_twse_data():
+  # 使用更完整的瀏覽器特徵 Headers 避免被證交所防火牆直接阻擋
   headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      "User-Agent": (
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
+          " like Gecko) Chrome/122.0.0.0 Safari/537.36"
+      ),
+      "Accept": "application/json, text/javascript, */*; q=0.01",
+      "Accept-Language": "zh-TW,zh;q=0.09,en-US;q=0.8,en;q=0.7",
+      "Referer": "https://www.twse.com.tw/",
   }
 
   curr = datetime.now()
@@ -35,7 +42,7 @@ def fetch_twse_data():
       d_str = curr.strftime("%Y%m%d")
       test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
       try:
-        res = requests.get(test_url, headers=headers, timeout=3)
+        res = requests.get(test_url, headers=headers, timeout=5)
         if res.status_code == 200:
           data = res.json()
           if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
@@ -53,7 +60,7 @@ def fetch_twse_data():
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
   try:
-    res = requests.get(mi_url, headers=headers, timeout=6)
+    res = requests.get(mi_url, headers=headers, timeout=8)
     if res.status_code == 200:
       data = res.json()
       if data.get("stat") == "OK":
@@ -86,7 +93,7 @@ def fetch_twse_data():
   for i, d_str in enumerate(dates):
     t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
-      res = requests.get(t86_url, headers=headers, timeout=4)
+      res = requests.get(t86_url, headers=headers, timeout=5)
       if res.status_code == 200:
         data = res.json()
         if data.get("stat") == "OK":
@@ -136,7 +143,9 @@ if latest_date:
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
 else:
-  st.warning("⚠️ 無法取得證交所官方資料，請檢查網路連線或稍後再試。")
+  st.error(
+      "⚠️ 無法取得證交所官方資料。可能原因：證交所 API 頻繁請求遭暫時阻擋，請稍候 1-2 分鐘後重新整理頁面（F5）。"
+  )
 
 if market_dict:
   base_rows = []
@@ -319,3 +328,7 @@ if market_dict:
       st.dataframe(
           df_top100, use_container_width=True, hide_index=True, height=600
       )
+else:
+  st.info(
+      "💡 提示：如果連續發生無法取得資料的情況，通常是證交所伺服器短暫限流，請稍候片刻再按網頁重新整理即可。"
+  )

@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度 (外本比、投本比與千張大戶雙A追蹤)")
+st.title("台股籌碼集中度 (外本比、投本比與千張大戶追蹤)")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -231,28 +231,6 @@ if market_dict:
           axis=1,
       )
 
-      conditions = [df["市值(億)"] > 3000, df["市值(億)"] >= 500]
-      choices = [1.5, 1.0]
-      df["市值權重係數"] = np.select(conditions, choices, default=0.7)
-
-      # 動能維持原本：外本比 50% + 投本比 50% * 市值權重
-      base_chip_score = (df["外本比(%)"] * 0.5) + (df["投本比(%)"] * 0.5)
-      df["綜合籌碼動能總分"] = round(base_chip_score * df["市值權重係數"], 2)
-
-      conditions_name = [
-          df["綜合籌碼動能總分"] >= 2.0,
-          df["綜合籌碼動能總分"] >= 0.8,
-          df["綜合籌碼動能總分"] > 0,
-      ]
-      name_choices = [
-          "🔥 【A級強勢鎖碼動能】",
-          "⚡ 【B級法人追價動能】",
-          "🌱 【C級潛力緩步動能】",
-      ]
-      df["最終籌碼動能顯示名稱"] = np.select(
-          conditions_name, name_choices, default="💤 【無明顯動能】"
-      )
-
       def calc_20d_metrics(code):
         active_streak = 0
         for d_str in target_dates:
@@ -307,10 +285,9 @@ if market_dict:
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
-    df_cross = df_cross.sort_values(
-        by="綜合籌碼動能總分", ascending=False
-    )
-    df_cross.insert(0, "動能排序", range(1, len(df_cross) + 1))
+    # 交叉比對表直接改用「外本比(%)」來排序
+    df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
+    df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
     # ==================== 頁面頂部：即時搜尋篩選面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
@@ -338,7 +315,7 @@ if market_dict:
     # ==================== 分頁顯示排行榜 ====================
     tab_cross, tab_top50, tab_top100 = st.tabs(
         [
-            "🎯 雙榜交叉比對 (含動能計算)",
+            "🎯 雙榜交叉比對",
             "🔥 1. 外資買賣超 Top 50",
             "💰 2. 成交值 Top 100",
         ]
@@ -346,7 +323,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表已包含 **外本比(50%) + 投本比(50%) + 市值加權**，並新增集保中心 **【千張大戶比例(%)】** 欄位。"
+          "💡 此表純粹呈現 **外本比(%)**、**投本比(%)** 以及集保中心 **【千張大戶比例(%)】**。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

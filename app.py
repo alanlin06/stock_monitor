@@ -271,14 +271,19 @@ if market_dict:
 
     df_all_enriched = enrich_data(df_market)
 
+    # 將原本的 Top 50 改為 Top 100
     df_f_buy = (
         df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
-        .head(50)
+        .head(100)
     )
-    df_top50 = enrich_data(df_f_buy)
-    df_top50 = df_top50.sort_values(by="雙法人總集中度(%)", ascending=False)
-    df_top50.insert(0, "排名", range(1, len(df_top50) + 1))
+    df_top100_foreign = enrich_data(df_f_buy)
+    df_top100_foreign = df_top100_foreign.sort_values(
+        by="雙法人總集中度(%)", ascending=False
+    )
+    df_top100_foreign.insert(
+        0, "排名", range(1, len(df_top100_foreign) + 1)
+    )
 
     df_t_100 = df_market.sort_values(
         by="外資買賣超張數", ascending=False
@@ -286,9 +291,9 @@ if market_dict:
     df_top100 = enrich_data(df_t_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    top50_codes = set(df_top50["代號"])
+    top_foreign_codes = set(df_top100_foreign["代號"])
     top100_codes = set(df_top100["代號"])
-    cross_codes = top50_codes.intersection(top100_codes)
+    cross_codes = top_foreign_codes.intersection(top100_codes)
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
@@ -323,7 +328,6 @@ if market_dict:
           "平均雙法人總集中度_pct"
       ].round(3)
 
-      # 重新命名欄位讓畫面上更好看
       df_industry_summary = df_industry_summary.rename(
           columns={
               "平均外本比_pct": "平均外本比(%)",
@@ -372,11 +376,12 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    tab_ind_summary, tab_cross, tab_top50, tab_top100 = st.tabs(
+    # 將原本的 Top 50 分頁名稱改為 Top 100
+    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
         [
             "📈 族群籌碼平均排行",
             "🎯 雙榜交叉比對",
-            "🔥 外資買賣超 Top 50",
+            "🔥 外資買賣超 Top 100",
             "💰 成交值 Top 100",
         ]
     )
@@ -430,21 +435,21 @@ if market_dict:
         )
         st.rerun()
 
-    with tab_top50:
-      edited_df_top50 = st.data_editor(
-          df_top50,
+    with tab_top100_f:
+      edited_df_top100_f = st.data_editor(
+          df_top100_foreign,
           use_container_width=True,
           hide_index=True,
           height=500,
           disabled=[
               col
-              for col in df_top50.columns
+              for col in df_top100_foreign.columns
               if col != "族群" and col != "排名"
           ],
-          key="editor_top50",
+          key="editor_top100_f",
       )
-      if st.button("💾 儲存並寫入永久檔案 (Top 50)", type="secondary"):
-        for _, row in edited_df_top50.iterrows():
+      if st.button("💾 儲存並寫入永久檔案 (外資 Top 100)", type="secondary"):
+        for _, row in edited_df_top100_f.iterrows():
           c = row["代號"]
           ind = row["族群"]
           if pd.notna(ind) and str(ind).strip() != "":
@@ -456,7 +461,7 @@ if market_dict:
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
         st.rerun()
 
-    with tab_top100:
+    with tab_top100_v:
       edited_df_top100 = st.data_editor(
           df_top100,
           use_container_width=True,
@@ -469,7 +474,7 @@ if market_dict:
           ],
           key="editor_top100",
       )
-      if st.button("💾 儲存並寫入永久檔案 (Top 100)", type="secondary"):
+      if st.button("💾 儲存並寫入永久檔案 (成交值 Top 100)", type="secondary"):
         for _, row in edited_df_top100.iterrows():
           c = row["代號"]
           ind = row["族群"]

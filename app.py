@@ -126,7 +126,7 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """強健版集保 1-5 資料解析（支援多種編碼與容錯）"""
+  """強健版集保 1-5 資料解析（無條件使用 header=None 以防漏掉第一列）"""
   tdcc_dict = {}
   url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
   try:
@@ -135,8 +135,9 @@ def fetch_tdcc_data():
       df_tdcc = None
       for enc in ["utf-8-sig", "big5", "cp950"]:
         try:
+          # 使用 header=None，確保第一列不會被當成表頭吃掉
           df_tdcc = pd.read_csv(
-              io.BytesIO(res.content), encoding=enc, dtype=str
+              io.BytesIO(res.content), encoding=enc, dtype=str, header=None
           )
           if df_tdcc is not None and len(df_tdcc.columns) >= 3:
             break
@@ -144,19 +145,11 @@ def fetch_tdcc_data():
           continue
 
       if df_tdcc is not None:
-        # 清理欄位名稱空白與 BOM
-        df_tdcc.columns = [
-            str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
-        ]
+        # 欄位對應：第 0 欄是代號，第 2 欄（或第 1 欄）是級距，最後一欄是比例
+        col_code = 0
+        col_level = 2 if df_tdcc.shape[1] > 2 else 1
+        col_ratio = df_tdcc.shape[1] - 1
 
-        # 通常集保格式：第0欄是代號、中間是級距、最後一欄是百分比
-        col_code = df_tdcc.columns[0]
-        col_level = (
-            df_tdcc.columns[2] if len(df_tdcc.columns) > 2 else df_tdcc.columns[1]
-        )
-        col_ratio = df_tdcc.columns[-1]
-
-        # 整理代號與級距數值
         df_tdcc["clean_code"] = (
             df_tdcc[col_code]
             .astype(str)
@@ -171,10 +164,10 @@ def fetch_tdcc_data():
             errors="coerce",
         )
 
-        # 篩選出 4 位數代號的資料
-        df_tdcc = df_tdcc[
-            df_tdcc["clean_code"].str.len() == 4
-        ]  # 找出每一檔股票持股分級最高的那一列（即千張大戶級距）
+        # 過濾出 4 位數代號
+        df_tdcc = df_tdcc[df_tdcc["clean_code"].str.len() == 4]
+
+        # 找出每一檔股票最高級距（即千張大戶）
         idx_max = df_tdcc.groupby("clean_code")["level_num"].idxmax()
         df_big = df_tdcc.loc[idx_max]
 
@@ -326,7 +319,7 @@ if market_dict:
     df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # 4. 千張大戶 Top 100（預設直接把大戶比例 > 0 的抓出來排序）
+    # 4. 千張大戶 Top 100
     df_tdcc_top100 = (
         df_market[df_market["千張大戶比例(%)"] > 0]
         .sort_values(by="千張大戶比例(%)", ascending=False)

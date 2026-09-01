@@ -12,6 +12,19 @@ st.set_page_config(
 
 st.title("台股籌碼集中度 (外本比、投本比與強勢股追蹤)")
 
+# ==================== 初始化 Session State (記憶庫) ====================
+if "user_industry_map" not in st.session_state:
+  # 預設的一些初始對應，您可以直接在畫面或這裡修改
+  st.session_state.user_industry_map = {
+      "2330": "半導體(晶圓代工)",
+      "3711": "半導體(封測)",
+      "2449": "半導體(封測)",
+      "2382": "AI伺服器",
+      "3231": "AI伺服器",
+      "2356": "AI伺服器",
+      "6669": "AI伺服器/矽智財",
+  }
+
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
 search_query = st.sidebar.text_input(
@@ -52,22 +65,6 @@ def fetch_twse_data():
     return {}, {}, {}, [], []
 
   latest_date = dates[0]
-
-  # ==================== 💡 【您的專屬族群記憶庫】 ====================
-  # 您可以在這裡自由地將股票代號對應到您想要的族群名稱。
-  # 沒填寫的股票，族群欄位就會保持空白，讓您隨時可以自由定義！
-  custom_industry_map = {
-      "2330": "半導體(晶圓代工)",
-      "3711": "半導體(封測)",
-      "2449": "半導體(封測)",
-      "2382": "AI伺服器",
-      "3231": "AI伺服器",
-      "2356": "AI伺服器",
-      "6669": "AI伺服器/矽智財",
-      # 格式範例： "您的股票代號": "您想要的族群名稱",
-  }
-
-  # 僅透過 MI_INDEX 單純同步收盤價與發行股數，不抓取官方雜亂的產業名稱
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
 
@@ -89,14 +86,10 @@ def fetch_twse_data():
                     )
                     close_price = float(row[8].replace(",", ""))
 
-                    # 如果在您的記憶庫有找到就填入，沒有就保持空白 ""
-                    assigned_ind = custom_industry_map.get(code, "")
-
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
-                        "自訂族群": assigned_ind,
                     }
                   except Exception:
                     continue
@@ -169,6 +162,9 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
+    # 從記憶庫中取出對應的族群，沒有就給空白
+    assigned_ind = st.session_state.user_industry_map.get(code, "")
+
     base_rows.append(
         {
             "代號": code,
@@ -180,7 +176,7 @@ if market_dict:
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
             "投信買賣超張數": t_shares / 1000,
-            "族群": info.get("自訂族群", ""),
+            "族群": assigned_ind,
         }
     )
 
@@ -239,7 +235,6 @@ if market_dict:
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
 
-      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」強制移至最後一欄保持空白可供記憶
       cols = list(df.columns)
       if "雙法人總集中度(%)" in cols:
         cols.remove("雙法人總集中度(%)")
@@ -255,7 +250,6 @@ if market_dict:
 
     df_all_enriched = enrich_data(df_market)
 
-    # 1. 外資買賣超 Top 50
     df_f_buy = (
         df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
@@ -265,14 +259,12 @@ if market_dict:
     df_top50 = df_top50.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_top50.insert(0, "排名", range(1, len(df_top50) + 1))
 
-    # 2. 成交值 Top 100
     df_t_100 = df_market.sort_values(
         by="外資買賣超張數", ascending=False
     ).head(100)
     df_top100 = enrich_data(df_t_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # 3. 雙榜交叉比對
     top50_codes = set(df_top50["代號"])
     top100_codes = set(df_top100["代號"])
     cross_codes = top50_codes.intersection(top100_codes)
@@ -305,7 +297,7 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 ====================
+    # ==================== 分頁顯示排行榜 (改為可編輯表格) ====================
     tab_cross, tab_top50, tab_top100 = st.tabs(
         [
             "🎯 雙榜交叉比對",
@@ -316,20 +308,82 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 **族群記憶庫使用說明**：最後一欄「族群」現在完全由您掌控！如果您想幫某檔股票分類，只要在程式碼上方的 `custom_industry_map = {}` 裡面直接 KEY 入 `\"股票代號\": \"您要的族群\"`，存檔後下次抓資料就會永遠記住囉！"
+          "💡 **操作說明**：您可以直接在下方表格最後一欄的「族群」空格中**點兩下直接打字**！打完後點擊表格下方的「💾 儲存我的族群修改」按鈕，系統就會幫您記住。"
       )
-      st.dataframe(
-          df_cross, use_container_width=True, hide_index=True, height=600
+
+      # 使用 st.data_editor 讓「族群」欄位可以直接編輯
+      edited_df_cross = st.data_editor(
+          df_cross,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col
+              for col in df_cross.columns
+              if col != "族群" and col != "排序"
+          ],  # 只有「族群」可以修改
+          key="editor_cross",
       )
+
+      if st.button("💾 儲存我的族群修改", type="primary"):
+        # 將修改後的結果更新回 session_state 記憶庫
+        for _, row in edited_df_cross.iterrows():
+          c = row["代號"]
+          ind = row["族群"]
+          if pd.notna(ind) and str(ind).strip() != "":
+            st.session_state.user_industry_map[c] = str(ind).strip()
+          else:
+            if c in st.session_state.user_industry_map:
+              del st.session_state.user_industry_map[c]
+        st.success("🎉 族群修改已成功儲存！重新整理或切換分頁後依然有效！")
 
     with tab_top50:
-      st.dataframe(
-          df_top50, use_container_width=True, hide_index=True, height=600
+      edited_df_top50 = st.data_editor(
+          df_top50,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col
+              for col in df_top50.columns
+              if col != "族群" and col != "排名"
+          ],
+          key="editor_top50",
       )
+      if st.button("💾 儲存 Top50 族群修改", type="secondary"):
+        for _, row in edited_df_top50.iterrows():
+          c = row["代號"]
+          ind = row["族群"]
+          if pd.notna(ind) and str(ind).strip() != "":
+            st.session_state.user_industry_map[c] = str(ind).strip()
+          else:
+            if c in st.session_state.user_industry_map:
+              del st.session_state.user_industry_map[c]
+        st.success("🎉 族群修改已成功儲存！")
 
     with tab_top100:
-      st.dataframe(
-          df_top100, use_container_width=True, hide_index=True, height=600
+      edited_df_top100 = st.data_editor(
+          df_top100,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col
+              for col in df_top100.columns
+              if col != "族群" and col != "排名"
+          ],
+          key="editor_top100",
       )
+      if st.button("💾 儲存 Top100 族群修改", type="secondary"):
+        for _, row in edited_df_top100.iterrows():
+          c = row["代號"]
+          ind = row["族群"]
+          if pd.notna(ind) and str(ind).strip() != "":
+            st.session_state.user_industry_map[c] = str(ind).strip()
+          else:
+            if c in st.session_state.user_industry_map:
+              del st.session_state.user_industry_map[c]
+        st.success("🎉 族群修改已成功儲存！")
+
 else:
   st.info("💡 提示：請重新整理頁面以順利載入資料。")

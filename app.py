@@ -126,57 +126,63 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """全自動抓取集保 1-5 檔，使用絕對索引直接對應千張大戶比例"""
+  """強健版集保 1-5 資料解析（支援多種編碼與容錯）"""
   tdcc_dict = {}
+  url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
   try:
-    url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
     res = requests.get(url, timeout=20)
     if res.status_code == 200:
-      # 嘗試不同編碼讀取
+      df_tdcc = None
       for enc in ["utf-8-sig", "big5", "cp950"]:
         try:
           df_tdcc = pd.read_csv(
               io.BytesIO(res.content), encoding=enc, dtype=str
           )
-          if len(df_tdcc.columns) >= 5:
+          if df_tdcc is not None and len(df_tdcc.columns) >= 3:
             break
         except:
           continue
 
-      # 清理所有欄位名稱的空白與特殊符號
-      df_tdcc.columns = [
-          str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
-      ]
+      if df_tdcc is not None:
+        # 清理欄位名稱空白與 BOM
+        df_tdcc.columns = [
+            str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
+        ]
 
-      # 集保格式通常為：[證券代號, 資料日期, 等級別, 人數, 股數, 占集保庫存數比例(%)]
-      col_code = df_tdcc.columns[0]
-      col_level = df_tdcc.columns[2]
-      col_ratio = df_tdcc.columns[-1]  # 通常最後一欄就是比例
+        # 通常集保格式：第0欄是代號、中間是級距、最後一欄是百分比
+        col_code = df_tdcc.columns[0]
+        col_level = (
+            df_tdcc.columns[2] if len(df_tdcc.columns) > 2 else df_tdcc.columns[1]
+        )
+        col_ratio = df_tdcc.columns[-1]
 
-      # 徹底洗淨代號，只留下純數字並補齊 4 碼
-      df_tdcc["clean_code"] = (
-          df_tdcc[col_code]
-          .astype(str)
-          .str.replace(r"\D", "", regex=True)
-          .str.zfill(4)
-      )
-      df_tdcc["level_num"] = pd.to_numeric(
-          df_tdcc[col_level], errors="coerce"
-      )
-      df_tdcc["ratio_num"] = pd.to_numeric(
-          df_tdcc[col_ratio].str.replace(",", ""), errors="coerce"
-      )
+        # 整理代號與級距數值
+        df_tdcc["clean_code"] = (
+            df_tdcc[col_code]
+            .astype(str)
+            .str.replace(r"\D", "", regex=True)
+            .str.zfill(4)
+        )
+        df_tdcc["level_num"] = pd.to_numeric(
+            df_tdcc[col_level], errors="coerce"
+        )
+        df_tdcc["ratio_num"] = pd.to_numeric(
+            df_tdcc[col_ratio].astype(str).str.replace(",", ""),
+            errors="coerce",
+        )
 
-      # 抓出每一檔股票「等級別」數字最大的那一列（即最高級距：千張以上大戶）
-      idx_max = df_tdcc.groupby("clean_code")["level_num"].idxmax()
-      df_big = df_tdcc.loc[idx_max]
+        # 篩選出 4 位數代號的資料
+        df_tdcc = df_tdcc[
+            df_tdcc["clean_code"].str.len() == 4
+        ]  # 找出每一檔股票持股分級最高的那一列（即千張大戶級距）
+        idx_max = df_tdcc.groupby("clean_code")["level_num"].idxmax()
+        df_big = df_tdcc.loc[idx_max]
 
-      for _, row in df_big.iterrows():
-        code_4 = row["clean_code"][-4:]
-        val = row["ratio_num"]
-        if len(code_4) == 4 and code_4.isdigit() and not pd.isna(val):
-          tdcc_dict[code_4] = float(val)
-
+        for _, row in df_big.iterrows():
+          c_4 = row["clean_code"]
+          val = row["ratio_num"]
+          if not pd.isna(val):
+            tdcc_dict[c_4] = float(val)
   except Exception as e:
     print(f"TDCC error: {e}")
 
@@ -201,9 +207,7 @@ if latest_date:
   st.sidebar.success(
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
-  st.sidebar.info(
-      f"📊 集保大戶資料庫已載入：共對應 {len(tdcc_big_holders)} 檔股票"
-  )
+  st.sidebar.info(f"📊 集保大戶資料庫已載入：共對應 {len(tdcc_big_holders)} 檔")
 else:
   st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
 
@@ -216,7 +220,6 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    # 絕對對應
     clean_c = str(code).strip().zfill(4)
     big_holder_pct = tdcc_big_holders.get(clean_c, 0.0)
 
@@ -272,13 +275,22 @@ if market_dict:
         name = row["官方名稱"]
         f_net = row["外資買賣超股數"]
         t_net = row["投信買賣超股數"]
+        big_pct = row["千張大戶比例(%)"]
 
+        tags = []
         if f_net > 0 and t_net > 0:
-          return f"{name} [🔥 雙A合擊]"
+          tags.append("🔥 雙A合擊")
         elif f_net > 0:
-          return f"{name} [外資獨買]"
+          tags.append("外資獨買")
         elif t_net > 0:
-          return f"{name} [投信獨買]"
+          tags.append("投信獨買")
+
+        # 大戶鎖碼註記
+        if big_pct > 30.0:
+          tags.append("💎 大戶鎖碼")
+
+        if tags:
+          return f"{name} [{' '.join(tags)}]"
         else:
           return name
 
@@ -287,6 +299,7 @@ if market_dict:
 
     df_all_enriched = enrich_data(df_market)
 
+    # 1. 之外資買賣超 Top 50
     df_f_buy = (
         df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
@@ -296,12 +309,14 @@ if market_dict:
     df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
     df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
+    # 2. 成交值 Top 100
     df_t_100 = df_market.sort_values(
         by="外資買賣超張數", ascending=False
     ).head(100)
     df_top100 = enrich_data(df_t_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
+    # 3. 雙榜交叉比對
     top50_codes = set(df_top50["代號"])
     top100_codes = set(df_top100["代號"])
     cross_codes = top50_codes.intersection(top100_codes)
@@ -310,6 +325,16 @@ if market_dict:
     df_cross = enrich_data(df_cross)
     df_cross = df_cross.sort_values(by="外本比(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
+
+    # 4. 千張大戶 Top 100（預設直接把大戶比例 > 0 的抓出來排序）
+    df_tdcc_top100 = (
+        df_market[df_market["千張大戶比例(%)"] > 0]
+        .sort_values(by="千張大戶比例(%)", ascending=False)
+        .head(100)
+        .copy()
+    )
+    df_tdcc_top100 = enrich_data(df_tdcc_top100)
+    df_tdcc_top100.insert(0, "大戶持股排名", range(1, len(df_tdcc_top100) + 1))
 
     # ==================== 頁面頂部：即時搜尋篩選面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
@@ -335,17 +360,26 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    tab_cross, tab_top50, tab_top100 = st.tabs(
+    tab_tdcc, tab_cross, tab_top50, tab_top100 = st.tabs(
         [
+            "🐋 千張大戶 Top 100",
             "🎯 雙榜交叉比對",
-            "🔥 1. 外資買賣超 Top 50",
-            "💰 2. 成交值 Top 100",
+            "🔥 外資買賣超 Top 50",
+            "💰 成交值 Top 100",
         ]
     )
 
+    with tab_tdcc:
+      st.info(
+          "💡 此表由集保中心 1-5 資料直接獨立計算，列出全台股 **【千張大戶持股比例(%)】** 最高的前 100 名！"
+      )
+      st.dataframe(
+          df_tdcc_top100, use_container_width=True, hide_index=True, height=600
+      )
+
     with tab_cross:
       st.info(
-          "💡 此表呈現 **外本比(%)**、**投本比(%)** 以及集保中心 **【千張大戶比例(%)】**。"
+          "💡 此表呈現 **外本比(%)**、**投本比(%)** 以及集保中心 **【千張大戶比例(%)】**，並自動標註大戶鎖碼強勢股。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

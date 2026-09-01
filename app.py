@@ -306,25 +306,34 @@ if market_dict:
           df_grouped_raw.groupby("族群")
           .agg(
               股票檔數=("代號", "count"),
-              平均外本比_％=("外本比(%)", "mean"),
-              平均投本比_％=("投本比(%)", "mean"),
-              平均雙法人總集中度_％=("雙法人總集中度(%)", "mean"),
+              平均外本比_pct=("外本比(%)", "mean"),
+              平均投本比_pct=("投本比(%)", "mean"),
+              平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
           )
           .reset_index()
       )
 
-      df_industry_summary["平均外本比_％"] = df_industry_summary[
-          "平均外本比_％"
+      df_industry_summary["平均外本比_pct"] = df_industry_summary[
+          "平均外本比_pct"
       ].round(3)
-      df_industry_summary["平均投本比_％"] = df_industry_summary[
-          "平均投本比_％"
+      df_industry_summary["平均投本比_pct"] = df_industry_summary[
+          "平均投本比_pct"
       ].round(3)
-      df_industry_summary["平均雙法人總集中度_％"] = df_industry_summary[
-          "平均雙法人總集中度_％"
+      df_industry_summary["平均雙法人總集中度_pct"] = df_industry_summary[
+          "平均雙法人總集中度_pct"
       ].round(3)
 
+      # 重新命名欄位讓畫面上更好看
+      df_industry_summary = df_industry_summary.rename(
+          columns={
+              "平均外本比_pct": "平均外本比(%)",
+              "平均投本比_pct": "平均投本比(%)",
+              "平均雙法人總集中度_pct": "平均雙法人總集中度(%)",
+          }
+      )
+
       df_industry_summary = df_industry_summary.sort_values(
-          by="平均雙法人總集中度_％", ascending=False
+          by="平均雙法人總集中度(%)", ascending=False
       )
       df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
     else:
@@ -333,9 +342,9 @@ if market_dict:
               "排名",
               "族群",
               "股票檔數",
-              "平均外本比_％",
-              "平均投本比_％",
-              "平均雙法人總集中度_％",
+              "平均外本比(%)",
+              "平均投本比(%)",
+              "平均雙法人總集中度(%)",
           ]
       )
 

@@ -53,14 +53,30 @@ def fetch_twse_data():
 
   latest_date = dates[0]
 
+  # 透過 MI_INDEX 精準抓取證交所官方細分產業（如：半導體業、電腦及週邊設備業等）
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
+  current_industry = "其他"
+
   try:
     res = requests.get(mi_url, headers=headers, timeout=8)
     if res.status_code == 200:
       data = res.json()
       if data.get("stat") == "OK":
         for table in data.get("tables", []):
+          t_title = table.get("title", "")
+          # 證交所表格標題例如 "24. 半導體業" 或 "27. 電子零組件業"
+          if "." in t_title:
+            parts = t_title.split(".", 1)
+            if len(parts) > 1:
+              sub_title = parts[1].strip()
+              if sub_title:
+                current_industry = sub_title
+          elif " " in t_title:
+            parts = t_title.split(" ", 1)
+            if len(parts) > 1:
+              current_industry = parts[1].strip()
+
           if "data" in table:
             for row in table["data"]:
               if len(row) > 10:
@@ -77,6 +93,7 @@ def fetch_twse_data():
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
+                        "官方產業": current_industry,
                     }
                   except Exception:
                     continue
@@ -122,7 +139,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在同步證交所官方法人籌碼資料中..."):
+with st.spinner("⏳ 正在同步證交所官方細分產業與法人籌碼資料中..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -160,38 +177,13 @@ if market_dict:
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
             "投信買賣超張數": t_shares / 1000,
+            "官方產業": info.get("官方產業", "其他"),
         }
     )
 
   df_market = pd.DataFrame(base_rows)
 
   if not df_market.empty:
-
-    def get_industry_group(code):
-      # 簡單以台股代號區段或特徵簡易歸類產業族群
-      c = int(code) if code.isdigit() else 0
-      if 2300 <= c <= 2499 or 3000 <= c <= 3399 or 3500 <= c <= 3799:
-        return "電子科技"
-      elif 2800 <= c <= 2899:
-        return "金融保險"
-      elif 1300 <= c <= 1399:
-        return "塑膠化工"
-      elif 2000 <= c <= 2099:
-        return "鋼鐵工業"
-      elif 2100 <= c <= 2199:
-        return "橡膠工業"
-      elif 2200 <= c <= 2299:
-        return "汽車工業"
-      elif 2500 <= c <= 2599 or 5500 <= c <= 5599:
-        return "營建營造"
-      elif 2600 <= c <= 2699:
-        return "航運類股"
-      elif 2900 <= c <= 2999:
-        return "百貨零售"
-      elif 9900 <= c <= 9999:
-        return "其他產業"
-      else:
-        return "傳產與其他"
 
     def enrich_data(df):
       df = df.copy()
@@ -225,8 +217,8 @@ if market_dict:
 
       df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
 
-      # 新增：族群欄位
-      df["族群"] = df["代號"].apply(get_industry_group)
+      # 族群欄位：直接對應證交所細分次產業 (如 半導體業、電腦及週邊設備業等)
+      df["族群"] = df["官方產業"]
 
       def format_display_name(row):
         name = row["官方名稱"]
@@ -248,7 +240,7 @@ if market_dict:
 
       df["顯示名稱"] = df.apply(format_display_name, axis=1)
 
-      # 調整欄位順序：把「雙法人總集中度(%)」放前面，「族群」移到最後面
+      # 調整欄位順序：「雙法人總集中度(%)」放前面，「族群」移至最後面
       cols = list(df.columns)
       if "雙法人總集中度(%)" in cols:
         cols.remove("雙法人總集中度(%)")
@@ -257,7 +249,7 @@ if market_dict:
 
       if "族群" in cols:
         cols.remove("族群")
-        cols.append("族群")  # 確保「族群」放在最後面
+        cols.append("族群")
 
       df = df[cols]
       return df
@@ -325,7 +317,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 此表呈現 **【雙法人總集中度(%)】**、連續買超天數，並在最後一欄附上 **【族群】** 分類，方便快速辨識產業。"
+          "💡 此表的最後一欄現在會顯示精細的**次產業類別**（例如：半導體業、電腦及週邊設備業、電子零組件業等）。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600

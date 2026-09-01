@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import io
 import numpy as np
 import pandas as pd
 import requests
@@ -6,12 +7,12 @@ import streamlit as st
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼集中度 (外本比 + 投本比 + 法人同步指標)",
+    page_title="台股籌碼集中度 (外本比 + 投本比 + 千張大戶)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度 (外本比、投本比與法人動向雙A追蹤)")
+st.title("台股籌碼集中度 (外本比、投本比與千張大戶雙A追蹤)")
 
 # ==================== 側邊欄參數與即時搜尋 ====================
 st.sidebar.header("實戰參數與查找")
@@ -22,7 +23,6 @@ search_query = st.sidebar.text_input(
 
 @st.cache_data(ttl=600)
 def fetch_twse_data():
-  # 使用更完整的瀏覽器特徵 Headers 避免被證交所防火牆直接阻擋
   headers = {
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -36,9 +36,8 @@ def fetch_twse_data():
   curr = datetime.now()
   dates = []
 
-  # 自動往前尋找最近的 25 個交易日
   while len(dates) < 25 and (datetime.now() - curr).days < 60:
-    if curr.weekday() < 5:  # 排除週末
+    if curr.weekday() < 5:
       d_str = curr.strftime("%Y%m%d")
       test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
       try:
@@ -56,7 +55,6 @@ def fetch_twse_data():
 
   latest_date = dates[0]
 
-  # 抓取最新交易日的收盤行情 (MI_INDEX)
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
   try:
@@ -126,7 +124,51 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在自動對齊最新交易日，同步外資與投信籌碼資料中..."):
+@st.cache_data(ttl=86400)
+def fetch_tdcc_data():
+  """從集保中心抓取最新一週的千張大戶持股比例 CSV 資料"""
+  tdcc_dict = {}
+  try:
+    url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1C"
+    res = requests.get(url, timeout=10)
+    if res.status_code == 200:
+      df_tdcc = pd.read_csv(io.StringIO(res.text))
+      df_tdcc.columns = [c.strip() for c in df_tdcc.columns]
+
+      code_col = [
+          c
+          for c in df_tdcc.columns
+          if "代號" in c or "證券代號" in c or "Code" in c
+      ]
+      level_col = [c for c in df_tdcc.columns if "級別" in c or "level" in c.lower()]
+      ratio_col = [
+          c for c in df_tdcc.columns if "比例" in c or "percent" in c.lower()
+      ]
+
+      if code_col and level_col and ratio_col:
+        c_col = code_col[0]
+        l_col = level_col[0]
+        r_col = ratio_col[0]
+
+        max_level = df_tdcc[l_col].max()
+        df_big = df_tdcc[df_tdcc[l_col] == max_level]
+
+        for _, row in df_big.iterrows():
+          code = str(row[c_col]).strip()
+          try:
+            ratio = float(str(row[r_col]).replace(",", ""))
+            tdcc_dict[code] = ratio
+          except Exception:
+            continue
+  except Exception as e:
+    print(f"TDCC fetch error: {e}")
+
+  return tdcc_dict
+
+
+with st.spinner(
+    "⏳ 正在同步證交所法人籌碼與集保中心【千張大戶持股比例】中..."
+):
   (
       market_dict,
       latest_foreign_shares,
@@ -134,8 +176,8 @@ with st.spinner("⏳ 正在自動對齊最新交易日，同步外資與投信�
       hist_foreign_shares,
       target_dates,
   ) = fetch_twse_data()
+  tdcc_big_holders = fetch_tdcc_data()
 
-# 取得最新日期顯示
 latest_date = target_dates[0] if target_dates else ""
 
 if latest_date:
@@ -143,9 +185,7 @@ if latest_date:
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
 else:
-  st.error(
-      "⚠️ 無法取得證交所官方資料。可能原因：證交所 API 頻繁請求遭暫時阻擋，請稍候 1-2 分鐘後重新整理頁面（F5）。"
-  )
+  st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
 
 if market_dict:
   base_rows = []
@@ -154,9 +194,8 @@ if market_dict:
     t_shares = latest_trust_shares.get(code, 0)
     close_p = info["收盤價"]
     shares = info["發行總股數"]
-
-    # 計算個股市值 (單位：億元) = (收盤價 * 發行總股數) / 1 億
     market_cap_100m = (close_p * shares) / 100000000
+    big_holder_pct = tdcc_big_holders.get(code, 0.0)
 
     base_rows.append(
         {
@@ -165,6 +204,7 @@ if market_dict:
             "發行總股數": shares,
             "收盤價": close_p,
             "市值(億)": round(market_cap_100m, 2),
+            "千張大戶比例(%)": big_holder_pct,
             "外資買賣超股數": f_shares,
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
@@ -178,7 +218,6 @@ if market_dict:
 
     def enrich_data(df):
       df = df.copy()
-      # 1. 外本比與投本比 (%)
       df["外本比(%)"] = df.apply(
           lambda row: round((row["外資買賣超股數"] / row["發行總股數"]) * 100, 3)
           if row["發行總股數"] > 0
@@ -192,16 +231,14 @@ if market_dict:
           axis=1,
       )
 
-      # 2. 市值加權影響係數 (市值 > 3000億給 1.5倍，500~3000億給 1.0倍，<500億給 0.7倍)
       conditions = [df["市值(億)"] > 3000, df["市值(億)"] >= 500]
       choices = [1.5, 1.0]
       df["市值權重係數"] = np.select(conditions, choices, default=0.7)
 
-      # 3. 綜合籌碼動能總分計算 (外本比佔 50%、投本比佔 50% * 市值權重)
+      # 動能維持原本：外本比 50% + 投本比 50% * 市值權重
       base_chip_score = (df["外本比(%)"] * 0.5) + (df["投本比(%)"] * 0.5)
       df["綜合籌碼動能總分"] = round(base_chip_score * df["市值權重係數"], 2)
 
-      # 4. 根據總分自動產生最終動能顯示名稱
       conditions_name = [
           df["綜合籌碼動能總分"] >= 2.0,
           df["綜合籌碼動能總分"] >= 0.8,
@@ -230,7 +267,6 @@ if market_dict:
 
       df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
 
-      # 法人動向標籤
       def format_display_name(row):
         name = row["官方名稱"]
         f_net = row["外資買賣超股數"]
@@ -250,7 +286,6 @@ if market_dict:
 
     df_all_enriched = enrich_data(df_market)
 
-    # 1. 準備外資買超 Top 50
     df_f_buy = (
         df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
@@ -260,14 +295,12 @@ if market_dict:
     df_top50 = df_top50.sort_values(by="外本比(%)", ascending=False)
     df_top50.insert(0, "外本比排名", range(1, len(df_top50) + 1))
 
-    # 2. 準備成交值 Top 100
     df_t_100 = df_market.sort_values(
         by="外資買賣超張數", ascending=False
     ).head(100)
     df_top100 = enrich_data(df_t_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # 3. 雙榜交叉比對
     top50_codes = set(df_top50["代號"])
     top100_codes = set(df_top100["代號"])
     cross_codes = top50_codes.intersection(top100_codes)
@@ -306,14 +339,14 @@ if market_dict:
     tab_cross, tab_top50, tab_top100 = st.tabs(
         [
             "🎯 雙榜交叉比對 (含動能計算)",
-            "🔥 1. 外資買超 Top 50",
+            "🔥 1. 外資買賣超 Top 50",
             "💰 2. 成交值 Top 100",
         ]
     )
 
     with tab_cross:
       st.info(
-          "💡 此表已自動套用 **外本比(50%) + 投本比(50%) + 市值加權影響係數**，並於最右側呈現「最終籌碼動能顯示名稱」。"
+          "💡 此表已包含 **外本比(50%) + 投本比(50%) + 市值加權**，並新增集保中心 **【千張大戶比例(%)】** 欄位。"
       )
       st.dataframe(
           df_cross, use_container_width=True, hide_index=True, height=600
@@ -329,6 +362,4 @@ if market_dict:
           df_top100, use_container_width=True, hide_index=True, height=600
       )
 else:
-  st.info(
-      "💡 提示：如果連續發生無法取得資料的情況，通常是證交所伺服器短暫限流，請稍候片刻再按網頁重新整理即可。"
-  )
+  st.info("💡 提示：請重新整理頁面以順利載入資料。")

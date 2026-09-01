@@ -126,36 +126,48 @@ def fetch_twse_data():
 
 @st.cache_data(ttl=86400)
 def fetch_tdcc_data():
-  """修正：改用正確的集保股權分散表 id=1-5 抓取千張大戶持股比例"""
+  """直接整張抓取集保 1-5 檔，取出最大級別（千張大戶）比例並回傳對應字典"""
   tdcc_dict = {}
   try:
     url = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5"
     res = requests.get(url, timeout=15)
     if res.status_code == 200:
-      df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="big5")
+      try:
+        df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="utf-8-sig")
+      except:
+        df_tdcc = pd.read_csv(io.BytesIO(res.content), encoding="big5")
+
+      # 清理欄位名稱
       df_tdcc.columns = [
           str(c).strip().replace("\ufeff", "") for c in df_tdcc.columns
       ]
 
-      # 集保 1-5 欄位通常為: 證券代號, 證券名稱, 持股分級, 人數, 股數, 占集保庫存數比例％
+      # 找出代號、級別、比例對應欄位
       col_code = df_tdcc.columns[0]
       col_level = df_tdcc.columns[2]
       col_ratio = df_tdcc.columns[-1]
 
+      # 強制將代號轉為純 4 碼字串，級別轉數字
+      df_tdcc["clean_code"] = (
+          df_tdcc[col_code].astype(str).str.strip().str.zfill(4)
+      )
       df_tdcc[col_level] = pd.to_numeric(df_tdcc[col_level], errors="coerce")
-      # 最大持股級別 (通常為第15級或最大值，即1000張以上大戶)
-      max_level = df_tdcc[col_level].max()
-      df_big = df_tdcc[df_tdcc[col_level] == max_level]
+
+      # 過濾出每一檔股票的最大級別（即千張以上大戶）
+      max_levels = df_tdcc.groupby("clean_code")[col_level].transform("max")
+      df_big = df_tdcc[df_tdcc[col_level] == max_levels]
 
       for _, row in df_big.iterrows():
-        code = str(row[col_code]).strip().zfill(4)
-        try:
-          ratio_val = float(str(row[col_ratio]).replace(",", ""))
-          tdcc_dict[code] = ratio_val
-        except Exception:
-          continue
+        c_key = row["clean_code"]
+        if len(c_key) >= 4:
+          c_4 = c_key[-4:]
+          try:
+            val = float(str(row[col_ratio]).replace(",", ""))
+            tdcc_dict[c_4] = val
+          except:
+            continue
   except Exception as e:
-    print(f"TDCC fetch error: {e}")
+    print(f"TDCC error: {e}")
 
   return tdcc_dict
 
@@ -190,10 +202,8 @@ if market_dict:
     shares = info["發行總股數"]
     market_cap_100m = (close_p * shares) / 100000000
 
-    big_holder_pct = tdcc_big_holders.get(
-        str(code).strip().zfill(4),
-        tdcc_big_holders.get(str(code).strip(), 0.0),
-    )
+    # 完整對應千張大戶比例
+    big_holder_pct = tdcc_big_holders.get(str(code).strip().zfill(4), 0.0)
 
     base_rows.append(
         {

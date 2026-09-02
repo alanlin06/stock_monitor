@@ -285,7 +285,7 @@ if market_dict:
         0, "排名", range(1, len(df_top100_foreign) + 1)
     )
 
-    # 2. 成交值 / 市值 Top 100 (修正此處改抓成交值/市值最高的 100 名)
+    # 2. 成交值 / 市值 Top 100
     df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
@@ -336,10 +336,20 @@ if market_dict:
           }
       )
 
+      # 💡 這裡加入過濾邏輯：只保留「平均雙法人總集中度(%) > 0」的正數族群，負數自動刪除
+      df_industry_summary = df_industry_summary[
+          df_industry_summary["平均雙法人總集中度(%)"] > 0
+      ]
+
       df_industry_summary = df_industry_summary.sort_values(
           by="平均雙法人總集中度(%)", ascending=False
       )
-      df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
+      
+      # 重新編排排名序號
+      if not df_industry_summary.empty:
+        df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
+      else:
+        df_industry_summary.insert(0, "排名", [])
     else:
       df_industry_summary = pd.DataFrame(
           columns=[
@@ -387,7 +397,7 @@ if market_dict:
 
     with tab_ind_summary:
       st.info(
-          "💡 **族群平均分析說明**：系統會自動抓取您所有「已分類族群」的股票，將它們的 **外本比** 與 **雙法人總集中度** 進行平均計算，幫您找出目前盤面上最強勢的產業族群！"
+          "💡 **族群平均分析說明**：系統會自動抓取您所有「已分類族群」的股票，計算平均雙法人總集中度，並**已自動過濾掉負數族群**，只保留資金集中、盤面最強勢的正數產業族群！"
       )
       if not df_industry_summary.empty:
         st.dataframe(
@@ -398,7 +408,7 @@ if market_dict:
         )
       else:
         st.warning(
-            "目前尚未在任何股票填寫族群名稱。請先在其他分頁的「族群」欄位打字並儲存，這裡就會自動幫你算出各族群平均囉！"
+            "目前沒有符合「平均總集中度 > 0」的族群，或尚未在股票填寫族群名稱。"
         )
 
     with tab_cross:

@@ -271,7 +271,7 @@ if market_dict:
 
     df_all_enriched = enrich_data(df_market)
 
-    # 將原本的 Top 50 改為 Top 100
+    # 1. 外資買賣超 Top 100
     df_f_buy = (
         df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
@@ -285,12 +285,12 @@ if market_dict:
         0, "排名", range(1, len(df_top100_foreign) + 1)
     )
 
-    df_t_100 = df_market.sort_values(
-        by="外資買賣超張數", ascending=False
-    ).head(100)
-    df_top100 = enrich_data(df_t_100)
+    # 2. 成交值 / 市值 Top 100 (修正此處改抓成交值/市值最高的 100 名)
+    df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
+    df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
+    # 3. 雙榜交叉比對 (外資 Top 100 ∩ 成交值 Top 100)
     top_foreign_codes = set(df_top100_foreign["代號"])
     top100_codes = set(df_top100["代號"])
     cross_codes = top_foreign_codes.intersection(top100_codes)
@@ -376,7 +376,6 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    # 將原本的 Top 50 分頁名稱改為 Top 100
     tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
         [
             "📈 族群籌碼平均排行",
@@ -404,7 +403,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "💡 **操作說明**：在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中！"
+          "💡 **操作說明**：此頁面顯示 **外資買超 Top 100** 與 **成交值 Top 100** 的交集個股。在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中！"
       )
 
       edited_df_cross = st.data_editor(

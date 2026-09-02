@@ -336,9 +336,14 @@ if market_dict:
           }
       )
 
-      # 💡 這裡加入過濾邏輯：只保留「平均雙法人總集中度(%) > 0」的正數族群，負數自動刪除
+      # 💡 新增過濾邏輯：
+      # 1. 平均雙法人總集中度必須 > 0
+      # 2. 平均外本比必須 >= 0 (排除負數)
+      # 3. 平均投本比必須 >= 0 (排除負數)
       df_industry_summary = df_industry_summary[
-          df_industry_summary["平均雙法人總集中度(%)"] > 0
+          (df_industry_summary["平均雙法人總集中度(%)"] > 0)
+          & (df_industry_summary["平均外本比(%)"] >= 0)
+          & (df_industry_summary["平均投本比(%)"] >= 0)
       ]
 
       df_industry_summary = df_industry_summary.sort_values(
@@ -397,7 +402,7 @@ if market_dict:
 
     with tab_ind_summary:
       st.info(
-          "💡 **族群平均分析說明**：系統會自動抓取您所有「已分類族群」的股票，計算平均雙法人總集中度，並**已自動過濾掉負數族群**，只保留資金集中、盤面最強勢的正數產業族群！"
+          "💡 **族群平均分析說明**：系統會自動計算各族群平均，並**已自動過濾掉總集中度 ≤ 0、或是平均外本比/投本比任一項為負數**的族群，確保留下的都是雙多方齊心強勢的產業！"
       )
       if not df_industry_summary.empty:
         st.dataframe(
@@ -408,7 +413,7 @@ if market_dict:
         )
       else:
         st.warning(
-            "目前沒有符合「平均總集中度 > 0」的族群，或尚未在股票填寫族群名稱。"
+            "目前沒有符合條件的族群（外本比與投本比皆須非負數，且總集中度須大於0）。"
         )
 
     with tab_cross:

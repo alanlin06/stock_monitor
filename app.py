@@ -300,10 +300,9 @@ if market_dict:
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 計算族群平均集中度統計 ====================
-    df_all_calculated = enrich_data(df_market)
-    df_grouped_raw = df_all_calculated[
-        df_all_calculated["族群"].str.strip() != ""
+    # ==================== 計算族群平均集中度統計 (改為只用「交叉比對」內的股票計算) ====================
+    df_grouped_raw = df_cross[
+        df_cross["族群"].str.strip() != ""
     ]
 
     if not df_grouped_raw.empty:
@@ -336,7 +335,7 @@ if market_dict:
           }
       )
 
-      # 💡 新增過濾邏輯：
+      # 💡 過濾邏輯：
       # 1. 平均雙法人總集中度必須 > 0
       # 2. 平均外本比必須 >= 0 (排除負數)
       # 3. 平均投本比必須 >= 0 (排除負數)
@@ -402,7 +401,7 @@ if market_dict:
 
     with tab_ind_summary:
       st.info(
-          "💡 **族群平均分析說明**：系統會自動計算各族群平均，並**已自動過濾掉總集中度 ≤ 0、或是平均外本比/投本比任一項為負數**的族群，確保留下的都是雙多方齊心強勢的產業！"
+          "💡 **族群平均分析說明**：系統會自動抓取**「雙榜交叉比對」內的股票**進行平均計算，並已自動過濾掉總集中度 ≤ 0、或是平均外本比/投本比任一項為負數的族群！"
       )
       if not df_industry_summary.empty:
         st.dataframe(
@@ -413,7 +412,7 @@ if market_dict:
         )
       else:
         st.warning(
-            "目前沒有符合條件的族群（外本比與投本比皆須非負數，且總集中度須大於0）。"
+            "目前交叉比對中沒有符合條件的族群（外本比與投本比皆須非負數，且總集中度須大於0）。"
         )
 
     with tab_cross:

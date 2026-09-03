@@ -300,12 +300,14 @@ if market_dict:
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 計算族群平均集中度統計 (改為只用「交叉比對」內的股票計算) ====================
+    # ==================== 計算族群平均集中度統計 (在股票檔數旁新增「籌碼集中度」欄位) ====================
     df_grouped_raw = df_cross[
         df_cross["族群"].str.strip() != ""
     ]
 
     if not df_grouped_raw.empty:
+      import numpy as np
+
       df_industry_summary = (
           df_grouped_raw.groupby("族群")
           .agg(
@@ -313,6 +315,8 @@ if market_dict:
               平均外本比_pct=("外本比(%)", "mean"),
               平均投本比_pct=("投本比(%)", "mean"),
               平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
+              外資總買超張數=("外資買賣超張數", "sum"),
+              族群總市值=("市值(億)", "sum"),
           )
           .reset_index()
       )
@@ -326,6 +330,9 @@ if market_dict:
       df_industry_summary["平均雙法人總集中度_pct"] = df_industry_summary[
           "平均雙法人總集中度_pct"
       ].round(3)
+      df_industry_summary["外資總買超張數"] = df_industry_summary[
+          "外資總買超張數"
+      ].round(0)
 
       df_industry_summary = df_industry_summary.rename(
           columns={
@@ -335,21 +342,39 @@ if market_dict:
           }
       )
 
-      # 💡 過濾邏輯：
-      # 1. 平均雙法人總集中度必須 > 0
-      # 2. 平均外本比必須 >= 0 (排除負數)
-      # 3. 平均投本比必須 >= 0 (排除負數)
+      # 💡 過濾邏輯：總集中度 > 0 且外本比/投本比非負數
       df_industry_summary = df_industry_summary[
           (df_industry_summary["平均雙法人總集中度(%)"] > 0)
           & (df_industry_summary["平均外本比(%)"] >= 0)
           & (df_industry_summary["平均投本比(%)"] >= 0)
       ]
 
-      df_industry_summary = df_industry_summary.sort_values(
-          by="平均雙法人總集中度(%)", ascending=False
+      # 🌟 計算「籌碼集中度」（綜合實力權重：平均總集中度 × 股票檔數開根號 × 外資總買超張數對數）
+      df_industry_summary["籌碼集中度"] = round(
+          df_industry_summary["平均雙法人總集中度(%)"]
+          * np.sqrt(df_industry_summary["股票檔數"])
+          * np.log1p(df_industry_summary["外資總買超張數"].clip(lower=0)),
+          2,
       )
-      
-      # 重新編排排名序號
+
+      # 依「籌碼集中度」由大到小排序
+      df_industry_summary = df_industry_summary.sort_values(
+          by="籌碼集中度", ascending=False
+      )
+
+      # 調整欄位順序：讓「籌碼集中度」緊接著「股票檔數」後面
+      cols_order = [
+          "族群",
+          "股票檔數",
+          "籌碼集中度",
+          "平均外本比(%)",
+          "平均投本比(%)",
+          "平均雙法人總集中度(%)",
+          "外資總買超張數",
+          "族群總市值",
+      ]
+      df_industry_summary = df_industry_summary[[c for c in cols_order if c in df_industry_summary.columns]]
+
       if not df_industry_summary.empty:
         df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
       else:
@@ -360,9 +385,12 @@ if market_dict:
               "排名",
               "族群",
               "股票檔數",
+              "籌碼集中度",
               "平均外本比(%)",
               "平均投本比(%)",
               "平均雙法人總集中度(%)",
+              "外資總買超張數",
+              "族群總市值",
           ]
       )
 
@@ -401,7 +429,7 @@ if market_dict:
 
     with tab_ind_summary:
       st.info(
-          "💡 **族群平均分析說明**：系統會自動抓取**「雙榜交叉比對」內的股票**進行平均計算，並已自動過濾掉總集中度 ≤ 0、或是平均外本比/投本比任一項為負數的族群！"
+          "💡 **族群平均分析說明**：已在「股票檔數」旁新增 **【籌碼集中度】** 欄位（結合平均集中度、族群厚度與外資買超張數規模權重），並以此進行自動排序，幫您把真正的大資金主流板塊推到最前方！"
       )
       if not df_industry_summary.empty:
         st.dataframe(

@@ -85,7 +85,7 @@ def fetch_twse_data():
     curr -= timedelta(days=1)
 
   if not dates:
-    return {}, {}, {}, [], 22000.0, 0.0, 0.0
+    return {}, {}, {}, [], [], 22000.0, 0.0, 0.0
 
   latest_date = dates[0]
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
@@ -274,7 +274,7 @@ if latest_date:
 else:
   st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
 
-# ==================== 側邊欄：12大權值股今日綜合貢獻點數 ====================
+# ==================== 側邊欄：12大權值股綜合貢獻點數 ====================
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📊 12大權值股綜合貢獻點數")
 

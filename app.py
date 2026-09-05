@@ -104,7 +104,6 @@ def fetch_twse_data():
             for row in table.get("data", []):
               if len(row) > 1 and "發行量加權股價指數" in str(row[0]):
                 try:
-                  # 通常收盤指數在索引 1 或 4，嘗試轉換大於 1000 的數字
                   for val in row:
                     v_str = str(val).replace(",", "")
                     try:
@@ -117,7 +116,6 @@ def fetch_twse_data():
                 except:
                   pass
 
-        # 廣泛搜尋整個 json 找發行量加權股價指數
         if taiex_close == 0.0:
           for table in data.get("tables", []):
             for row in table.get("data", []):
@@ -127,7 +125,7 @@ def fetch_twse_data():
                   try:
                     v_str = str(val).replace(",", "").replace("+", "")
                     num = float(v_str)
-                    if num > 3000:  # 大盤指數合理範圍
+                    if num > 3000:
                       taiex_close = num
                       break
                   except:
@@ -135,7 +133,6 @@ def fetch_twse_data():
                 if taiex_close > 0:
                   break
 
-        # 抓取個股資料
         for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
@@ -168,7 +165,7 @@ def fetch_twse_data():
     print(f"MI_INDEX error: {e}")
 
   if taiex_close == 0.0:
-    taiex_close = 22000.0  # 安全防護預設值
+    taiex_close = 22000.0
 
   latest_foreign_shares = {}
   latest_trust_shares = {}
@@ -231,6 +228,33 @@ if latest_date:
   )
 else:
   st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
+
+# ==================== 側邊欄：12大權值股影響點數顯示 ====================
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📊 12大權值股影響點數")
+
+top12_data = [
+    {"排名": 1, "代號": "2330", "名稱": "台積電", "權重占比": 41.4777},
+    {"排名": 2, "代號": "2454", "名稱": "聯發科", "權重占比": 4.1867},
+    {"排名": 3, "代號": "2308", "名稱": "台達電", "權重占比": 3.1786},
+    {"排名": 4, "代號": "2317", "名稱": "鴻海", "權重占比": 2.3325},
+    {"排名": 5, "代號": "3711", "名稱": "日月光投控", "權重占比": 1.7363},
+    {"排名": 6, "代號": "2881", "名稱": "富邦金", "權重占比": 1.3415},
+    {"排名": 7, "代號": "2383", "名稱": "台光電", "權重占比": 1.3071},
+    {"排名": 8, "代號": "1303", "名稱": "南亞", "權重占比": 1.2791},
+    {"排名": 9, "代號": "2408", "名稱": "南亞科", "權重占比": 1.1190},
+    {"排名": 10, "代號": "3037", "名稱": "欣興", "權重占比": 1.0889},
+    {"排名": 11, "代號": "2303", "名稱": "聯電", "權重占比": 1.0790},
+    {"排名": 12, "代號": "2882", "名稱": "國泰金", "權重占比": 1.0780},
+]
+
+for item in top12_data:
+  pts = taiex_close * (item["權重占比"] / 100.0)
+  st.sidebar.markdown(
+      f"**{item['排名']}. {item['名稱']} ({item['代號']})**<br>➡️ 影響基底：**{pts:,.2f} 點**"
+      f" ({item['權重占比']}%)",
+      unsafe_allow_html=True,
+  )
 
 if market_dict:
   base_rows = []
@@ -471,17 +495,14 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 ====================
-    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v, tab_top12_impact = (
-        st.tabs(
-            [
-                "📈 族群籌碼平均排行",
-                "🎯 雙榜交叉比對",
-                "🔥 外資買賣超 Top 100",
-                "💰 成交值 Top 100",
-                "📊 12大權值股影響點數",
-            ]
-        )
+    # ==================== 分頁顯示排行榜 (剩下 4 個分頁) ====================
+    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
+        [
+            "📈 族群籌碼平均排行",
+            "🎯 雙榜交叉比對",
+            "🔥 外資買賣超 Top 100",
+            "💰 成交值 Top 100",
+        ]
     )
 
     with tab_ind_summary:
@@ -607,52 +628,6 @@ if market_dict:
         save_db(st.session_state.user_industry_map)
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
         st.rerun()
-
-    with tab_top12_impact:
-      st.markdown(
-          f"### 📊 12 大權值股對大盤影響分析 (大盤收盤：{taiex_close:,.2f} 點)"
-      )
-      st.info(
-          "以下根據您指定的 12 檔權值股權重比例，結合今日大盤收盤點數，計算出各個股對大盤的理論貢獻點數（註：實際點數會隨每檔個股當日漲跌幅聯動變動）。"
-      )
-
-      top12_data = [
-          {"排名": 1, "代號": "2330", "名稱": "台積電", "權重占比": 41.4777},
-          {"排名": 2, "代號": "2454", "名稱": "聯發科", "權重占比": 4.1867},
-          {"排名": 3, "代號": "2308", "名稱": "台達電", "權重占比": 3.1786},
-          {"排名": 4, "代號": "2317", "名稱": "鴻海", "權重占比": 2.3325},
-          {"排名": 5, "代號": "3711", "名稱": "日月光投控", "權重占比": 1.7363},
-          {"排名": 6, "代號": "2881", "名稱": "富邦金", "權重占比": 1.3415},
-          {"排名": 7, "代號": "2383", "名稱": "台光電", "權重占比": 1.3071},
-          {"排名": 8, "代號": "1303", "名稱": "南亞", "權重占比": 1.2791},
-          {"排名": 9, "代號": "2408", "名稱": "南亞科", "權重占比": 1.1190},
-          {"排名": 10, "代號": "3037", "名稱": "欣興", "權重占比": 1.0889},
-          {"排名": 11, "代號": "2303", "名稱": "聯電", "權重占比": 1.0790},
-          {"排名": 12, "代號": "2882", "名稱": "國泰金", "權重占比": 1.0780},
-      ]
-
-      rows_12 = []
-      for item in top12_data:
-        code = item["代號"]
-        stock_info = market_dict.get(code, {})
-        close_p = stock_info.get("收盤價", 0.0)
-
-        weight_ratio = item["權重占比"] / 100.0
-        base_points_equivalent = taiex_close * weight_ratio
-
-        rows_12.append(
-            {
-                "排名": item["排名"],
-                "代號": code,
-                "名稱": item["名稱"],
-                "權重占比(%)": item["權重占比"],
-                "今日收盤價": close_p,
-                "大盤等效權重市值(點數基底)": round(base_points_equivalent, 2),
-            }
-        )
-
-      df_t12 = pd.DataFrame(rows_12)
-      st.dataframe(df_t12, use_container_width=True, hide_index=True)
 
 else:
   st.info("💡 提示：請重新整理頁面以順利載入資料。")

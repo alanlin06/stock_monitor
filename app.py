@@ -12,6 +12,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
+# ==================== 簡單安全的登入驗證函式 ====================
+def check_password():
+  """傳回 True 代表通過驗證"""
+
+  def password_entered():
+    # 這裡設定你跟付費會員要用的密碼（可以自行更改）
+    if st.session_state["password"] == "hair888":  # <-- 預設密碼，可自由修改
+      st.session_state["password_correct"] = True
+      del st.session_state["password"]  # 不要在記憶體留下密碼明文
+    else:
+      st.session_state["password_correct"] = False
+
+  # 如果已經驗證通過，直接回傳 True
+  if st.session_state.get("password_correct", False):
+    return True
+
+  # 顯示輸入密碼的畫面
+  st.title("🔒 系統鎖定：請輸入存取密碼")
+  st.text_input(
+      "密碼", type="password", on_change=password_entered, key="password"
+  )
+  if "password_correct" in st.session_state:
+    st.error("😕 密碼錯誤，請重新輸入")
+  return False
+
+
+# 如果沒有通過密碼驗證，直接停止往下執行
+if not check_password():
+  st.stop()
+
+
+# ==================== 通過驗證後的原本主程式 ====================
 st.title("台股籌碼集中度 (外本比、投本比與強勢股追蹤)")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
@@ -290,7 +323,7 @@ if market_dict:
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # 3. 雙榜交叉比對 (外資 Top 100 ∩ 成交值 Top 100)
+    # 3. 雙榜交叉比對
     top_foreign_codes = set(df_top100_foreign["代號"])
     top100_codes = set(df_top100["代號"])
     cross_codes = top_foreign_codes.intersection(top100_codes)
@@ -300,10 +333,8 @@ if market_dict:
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 計算族群平均集中度統計 (在股票檔數旁新增「籌碼集中度」欄位) ====================
-    df_grouped_raw = df_cross[
-        df_cross["族群"].str.strip() != ""
-    ]
+    # ==================== 族群平均集中度統計 ====================
+    df_grouped_raw = df_cross[df_cross["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
       import numpy as np
@@ -342,14 +373,12 @@ if market_dict:
           }
       )
 
-      # 💡 過濾邏輯：總集中度 > 0 且外本比/投本比非負數
       df_industry_summary = df_industry_summary[
           (df_industry_summary["平均雙法人總集中度(%)"] > 0)
           & (df_industry_summary["平均外本比(%)"] >= 0)
           & (df_industry_summary["平均投本比(%)"] >= 0)
       ]
 
-      # 🌟 計算「籌碼集中度」（綜合實力權重：平均總集中度 × 股票檔數開根號 × 外資總買超張數對數）
       df_industry_summary["籌碼集中度"] = round(
           df_industry_summary["平均雙法人總集中度(%)"]
           * np.sqrt(df_industry_summary["股票檔數"])
@@ -357,12 +386,10 @@ if market_dict:
           2,
       )
 
-      # 依「籌碼集中度」由大到小排序
       df_industry_summary = df_industry_summary.sort_values(
           by="籌碼集中度", ascending=False
       )
 
-      # 調整欄位順序：讓「籌碼集中度」緊接著「股票檔數」後面
       cols_order = [
           "族群",
           "股票檔數",
@@ -373,10 +400,14 @@ if market_dict:
           "外資總買超張數",
           "族群總市值",
       ]
-      df_industry_summary = df_industry_summary[[c for c in cols_order if c in df_industry_summary.columns]]
+      df_industry_summary = df_industry_summary[
+          [c for c in cols_order if c in df_industry_summary.columns]
+      ]
 
       if not df_industry_summary.empty:
-        df_industry_summary.insert(0, "排名", range(1, len(df_industry_summary) + 1))
+        df_industry_summary.insert(
+            0, "排名", range(1, len(df_industry_summary) + 1)
+        )
       else:
         df_industry_summary.insert(0, "排名", [])
     else:
@@ -428,9 +459,6 @@ if market_dict:
     )
 
     with tab_ind_summary:
-      st.info(
-          "💡 **族群平均分析說明**：已在「股票檔數」旁新增 **【籌碼集中度】** 欄位（結合平均集中度、族群厚度與外資買超張數規模權重），並以此進行自動排序，幫您把真正的大資金主流板塊推到最前方！"
-      )
       if not df_industry_summary.empty:
         st.dataframe(
             df_industry_summary,
@@ -439,15 +467,9 @@ if market_dict:
             height=500,
         )
       else:
-        st.warning(
-            "目前交叉比對中沒有符合條件的族群（外本比與投本比皆須非負數，且總集中度須大於0）。"
-        )
+        st.warning("目前無符合條件的族群資料。")
 
     with tab_cross:
-      st.info(
-          "💡 **操作說明**：此頁面顯示 **外資買超 Top 100** 與 **成交值 Top 100** 的交集個股。在表格最後一欄的「族群」打字後，點擊下方的**「💾 儲存並寫入永久檔案」**，資料就會寫入電腦硬碟中！"
-      )
-
       edited_df_cross = st.data_editor(
           df_cross,
           use_container_width=True,
@@ -471,9 +493,7 @@ if market_dict:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
         save_db(st.session_state.user_industry_map)
-        st.success(
-            "🎉 族群資料已成功寫入硬碟檔案！重新整理或重開程式都會完美記憶！"
-        )
+        st.success("🎉 族群資料已成功寫入硬碟檔案！")
         st.rerun()
 
     with tab_top100_f:

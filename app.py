@@ -85,37 +85,60 @@ def fetch_twse_data():
     curr -= timedelta(days=1)
 
   if not dates:
-    return {}, {}, {}, [], 22000.0
+    return {}, {}, {}, [], 22000.0, 0.0, 0.0
 
   latest_date = dates[0]
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
   taiex_close = 0.0
+  taiex_change = 0.0
+  taiex_pct = 0.0
 
   try:
     res = requests.get(mi_url, headers=headers, timeout=8)
     if res.status_code == 200:
       data = res.json()
       if data.get("stat") == "OK":
-        # 尋找加權指數收盤價
         for table in data.get("tables", []):
           title_str = str(table.get("title", ""))
           if "發行量加權股價指數" in title_str or "指數" in title_str:
             for row in table.get("data", []):
               if len(row) > 1 and "發行量加權股價指數" in str(row[0]):
                 try:
+                  # row 通常包含 [指數名稱, 收盤指數, 漲跌(+/-), 漲跌點數, 漲跌百分比(%)]
+                  # 我們嘗試尋找大盤數值
+                  vals = []
                   for val in row:
-                    v_str = str(val).replace(",", "")
+                    v_str = (
+                        str(val)
+                        .replace(",", "")
+                        .replace("+", "")
+                        .replace("X", "")
+                        .strip()
+                    )
                     try:
-                      num = float(v_str)
-                      if num > 1000:
-                        taiex_close = num
-                        break
+                      vals.append(float(v_str))
                     except:
                       pass
+
+                  for num in vals:
+                    if num > 3000:
+                      taiex_close = num
+                      break
+
+                  # 找漲跌點數與幅度
+                  for num in vals:
+                    if (
+                        abs(num) < 2000 and num != taiex_close and num != 0.0
+                    ):  # 可能是漲跌幅或漲跌點
+                      if -20 < num < 20:
+                        taiex_pct = num
+                      else:
+                        taiex_change = num
                 except:
                   pass
 
+        # 備用解析法：直接掃描表格
         if taiex_close == 0.0:
           for table in data.get("tables", []):
             for row in table.get("data", []):
@@ -123,7 +146,7 @@ def fetch_twse_data():
               if "發行量加權股價指數" in row_str:
                 for val in row:
                   try:
-                    v_str = str(val).replace(",", "").replace("+", "")
+                    v_str = str(val).replace(",", "").replace("+", "").strip()
                     num = float(v_str)
                     if num > 3000:
                       taiex_close = num
@@ -133,6 +156,7 @@ def fetch_twse_data():
                 if taiex_close > 0:
                   break
 
+        # 讀取個股資料
         for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
@@ -147,17 +171,28 @@ def fetch_twse_data():
                     close_price = float(row[8].replace(",", ""))
                     change_val = 0.0
                     try:
-                      change_val = float(
-                          row[9].replace(",", "").replace("+", "")
+                      change_str = (
+                          row[9]
+                          .replace(",", "")
+                          .replace("+", "")
+                          .replace("X", "")
+                          .strip()
                       )
+                      change_val = float(change_str)
                     except:
-                      pass
+                      change_val = 0.0
+
+                    pct_val = 0.0
+                    prev_p = close_price - change_val
+                    if prev_p > 0:
+                      pct_val = (change_val / prev_p) * 100
 
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
                         "漲跌": change_val,
+                        "漲跌幅(%)": pct_val,
                     }
                   except Exception:
                     continue
@@ -167,6 +202,7 @@ def fetch_twse_data():
   if taiex_close == 0.0:
     taiex_close = 22000.0
 
+  # 如果沒有抓到即時漲跌點數，試著由個股權重或預設補齊，或設為 0
   latest_foreign_shares = {}
   latest_trust_shares = {}
   hist_foreign_shares = {}
@@ -204,6 +240,8 @@ def fetch_twse_data():
       hist_foreign_shares,
       dates,
       taiex_close,
+      taiex_change,
+      taiex_pct,
   )
 
 
@@ -215,6 +253,8 @@ with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料..."):
       hist_foreign_shares,
       target_dates,
       taiex_close,
+      taiex_change,
+      taiex_pct,
   ) = fetch_twse_data()
 
 latest_date = target_dates[0] if target_dates else ""
@@ -223,38 +263,60 @@ if latest_date:
   st.sidebar.success(
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
+
+  # 顯示大盤指數與今日漲跌
+  change_sign = "+" if taiex_change > 0 else ("" if taiex_change == 0 else "")
   st.sidebar.metric(
-      label="📈 大盤加權指數收盤", value=f"{taiex_close:,.2f} 點"
+      label="📈 大盤加權指數收盤",
+      value=f"{taiex_close:,.2f} 點",
+      delta=(
+          f"{change_sign}{taiex_change:,.2f} 點 ({change_sign}{taiex_pct:.2f}%)"
+          if taiex_change != 0
+          else None
+      ),
   )
 else:
   st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
 
-# ==================== 側邊欄：12大權值股影響點數顯示 ====================
+# ==================== 側邊欄：12大權值股今日貢獻點數 ====================
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 12大權值股影響點數")
+st.sidebar.markdown("### 📊 12大權值股今日貢獻點數")
 
-top12_data = [
-    {"排名": 1, "代號": "2330", "名稱": "台積電", "權重占比": 41.4777},
-    {"排名": 2, "代號": "2454", "名稱": "聯發科", "權重占比": 4.1867},
-    {"排名": 3, "代號": "2308", "名稱": "台達電", "權重占比": 3.1786},
-    {"排名": 4, "代號": "2317", "名稱": "鴻海", "權重占比": 2.3325},
-    {"排名": 5, "代號": "3711", "名稱": "日月光投控", "權重占比": 1.7363},
-    {"排名": 6, "代號": "2881", "名稱": "富邦金", "權重占比": 1.3415},
-    {"排名": 7, "代號": "2383", "名稱": "台光電", "權重占比": 1.3071},
-    {"排名": 8, "代號": "1303", "名稱": "南亞", "權重占比": 1.2791},
-    {"排名": 9, "代號": "2408", "名稱": "南亞科", "權重占比": 1.1190},
-    {"排名": 10, "代號": "3037", "名稱": "欣興", "權重占比": 1.0889},
-    {"排名": 11, "代號": "2303", "名稱": "聯電", "權重占比": 1.0790},
-    {"排名": 12, "代號": "2882", "名稱": "國泰金", "權重占比": 1.0780},
-]
+top12_weights = {
+    "2330": {"名稱": "台積電", "權重占比": 41.4777},
+    "2454": {"名稱": "聯發科", "權重占比": 4.1867},
+    "2308": {"名稱": "台達電", "權重占比": 3.1786},
+    "2317": {"名稱": "鴻海", "權重占比": 2.3325},
+    "3711": {"名稱": "日月光投控", "權重占比": 1.7363},
+    "2881": {"名稱": "富邦金", "權重占比": 1.3415},
+    "2383": {"名稱": "台光電", "權重占比": 1.3071},
+    "1303": {"名稱": "南亞", "權重占比": 1.2791},
+    "2408": {"名稱": "南亞科", "權重占比": 1.1190},
+    "3037": {"名稱": "欣興", "權重占比": 1.0889},
+    "2303": {"名稱": "聯電", "權重占比": 1.0790},
+    "2882": {"名稱": "國泰金", "權重占比": 1.0780},
+}
 
-for item in top12_data:
-  pts = taiex_close * (item["權重占比"] / 100.0)
+rank = 1
+for code, info in top12_weights.items():
+  name = info["名稱"]
+  w_pct = info["權重占比"]
+
+  stock_info = market_dict.get(code, {})
+  stock_pct = stock_info.get("漲跌幅(%)", 0.0)
+
+  # 計算今日實際貢獻點數
+  impact_pts = taiex_close * (w_pct / 100.0) * (stock_pct / 100.0)
+
+  sign_str = "+" if impact_pts > 0 else ""
+  color_emoji = "🟢" if impact_pts > 0 else ("🔴" if impact_pts < 0 else "⚪")
+
   st.sidebar.markdown(
-      f"**{item['排名']}. {item['名稱']} ({item['代號']})**<br>➡️ 影響基底：**{pts:,.2f} 點**"
-      f" ({item['權重占比']}%)",
+      f"**{rank}. {name} ({code})** | 漲跌: {stock_pct:+.2f}%<br>"
+      f"貢獻：{color_emoji} **{sign_str}{impact_pts:,.2f} 點**",
       unsafe_allow_html=True,
   )
+  rank += 1
 
 if market_dict:
   base_rows = []
@@ -280,6 +342,7 @@ if market_dict:
             "投信買賣超張數": t_shares / 1000,
             "族群": assigned_ind,
             "漲跌": info.get("漲跌", 0.0),
+            "漲跌幅(%)": round(info.get("漲跌幅(%)", 0.0), 2),
         }
     )
 
@@ -495,7 +558,7 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 (剩下 4 個分頁) ====================
+    # ==================== 分頁顯示排行榜 (4 個分頁) ====================
     tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
         [
             "📈 族群籌碼平均排行",
@@ -610,9 +673,7 @@ if market_dict:
           hide_index=True,
           height=500,
           disabled=[
-              col
-              for col in df_top100.columns
-              if col != "族群" and col != "排名"
+              col for col in df_top100.columns if col != "族群" and col != "排名"
           ],
           key="editor_top100",
       )

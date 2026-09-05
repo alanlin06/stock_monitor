@@ -426,43 +426,52 @@ if market_dict:
 
     with tab_ind_summary:
       if not df_industry_summary.empty:
-        st.dataframe(
+        # 在表格最前方加入「查看」勾選欄位 (預設全部為 False)
+        df_industry_summary.insert(0, "查看", False)
+
+        st.info(
+            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開該族群籌碼最集中的前三名強勢股！"
+        )
+
+        # 透過 st.data_editor 讓使用者可以勾選
+        edited_industry_summary = st.data_editor(
             df_industry_summary,
             use_container_width=True,
             hide_index=True,
             height=400,
+            disabled=[
+                c for c in df_industry_summary.columns if c != "查看"
+            ],  # 只有「查看」欄位可以打勾
+            key="editor_industry_checkbox",
         )
 
-        st.markdown("---")
-        st.markdown("### 🏆 族群內籌碼最集中前三名強勢股")
+        # 找出所有被勾選的族群
+        selected_rows = edited_industry_summary[
+            edited_industry_summary["查看"] == True
+        ]
 
-        industry_list = df_industry_summary["族群"].tolist()
+        if not selected_rows.empty:
+          st.markdown("---")
+          st.markdown("### 🏆 已勾選族群內籌碼最集中前三名強勢股")
 
-        if industry_list:
-          selected_industry = st.selectbox(
-              "請選擇想深入查看的族群", industry_list, key="selected_ind_for_top3"
-          )
+          for _, ind_row in selected_rows.iterrows():
+            target_ind = ind_row["族群"]
 
-          if selected_industry:
-            # 從完整明細中抓出該族群的所有股票
+            # 從完整明細中抓出該族群所有股票
             df_ind_stocks = df_all_enriched[
-                df_all_enriched["族群"] == selected_industry
+                df_all_enriched["族群"] == target_ind
             ].copy()
 
             if not df_ind_stocks.empty:
-              # 依照雙法人總集中度排序取前三名
               df_top3 = df_ind_stocks.sort_values(
                   by="雙法人總集中度(%)", ascending=False
               ).head(3)
               df_top3.insert(0, "族群排名", range(1, len(df_top3) + 1))
 
-              st.info(
-                  f"📊 目前選定族群：**{selected_industry}**（共涵蓋"
-                  f" {len(df_ind_stocks)} 檔股票）"
-              )
+              st.subheader(f"📌 {target_ind}")
               st.dataframe(df_top3, use_container_width=True, hide_index=True)
             else:
-              st.warning(f"目前「{selected_industry}」族群底下沒有找到對應的股票資料。")
+              st.warning(f"「{target_ind}」族群底下暫無股票資料。")
       else:
         st.warning("目前無符合條件的族群資料。")
 

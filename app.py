@@ -12,39 +12,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-
-# ==================== 簡單安全的登入驗證函式 ====================
-def check_password():
-  """傳回 True 代表通過驗證"""
-
-  def password_entered():
-    # 這裡設定你跟付費會員要用的密碼（可以自行更改）
-    if st.session_state["password"] == "hair888":  # <-- 預設密碼，可自由修改
-      st.session_state["password_correct"] = True
-      del st.session_state["password"]  # 不要在記憶體留下密碼明文
-    else:
-      st.session_state["password_correct"] = False
-
-  # 如果已經驗證通過，直接回傳 True
-  if st.session_state.get("password_correct", False):
-    return True
-
-  # 顯示輸入密碼的畫面
-  st.title("🔒 系統鎖定：請輸入存取密碼")
-  st.text_input(
-      "密碼", type="password", on_change=password_entered, key="password"
-  )
-  if "password_correct" in st.session_state:
-    st.error("😕 密碼錯誤，請重新輸入")
-  return False
-
-
-# 如果沒有通過密碼驗證，直接停止往下執行
-if not check_password():
-  st.stop()
-
-
-# ==================== 通過驗證後的原本主程式 ====================
 st.title("台股籌碼集中度 (外本比、投本比與強勢股追蹤)")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
@@ -531,7 +498,7 @@ if market_dict:
           disabled=[
               col
               for col in df_top100.columns
-              if col != "族群" and col != "排名"
+              if col != "族網" and col != "排名"
           ],
           key="editor_top100",
       )

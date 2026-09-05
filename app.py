@@ -68,9 +68,16 @@ def fetch_twse_data():
   }
 
   curr = datetime.now()
+  
+  # 【防呆修正】如果是週末，直接把起始日期推算到最近的星期五，避免抓取未開盤日
+  if curr.weekday() == 5:
+      curr -= timedelta(days=1)
+  elif curr.weekday() == 6:
+      curr -= timedelta(days=2)
+
   dates = []
 
-  while len(dates) < 25 and (datetime.now() - curr).days < 60:
+  while len(dates) < 25 and (datetime.now() - curr).days < 90:
     if curr.weekday() < 5:
       d_str = curr.strftime("%Y%m%d")
       test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"

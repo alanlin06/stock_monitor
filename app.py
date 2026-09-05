@@ -59,52 +59,53 @@ search_query = st.sidebar.text_input(
 def fetch_twse_data():
   headers = {
       "User-Agent": (
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-          " like Gecko) Chrome/122.0.0.0 Safari/537.36"
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+          "AppleWebKit/537.36 (KHTML, like Gecko) "
+          "Chrome/122.0.0.0 Safari/537.36"
       ),
       "Accept": "application/json, text/javascript, */*; q=0.01",
-      "Accept-Language": "zh-TW,zh;q=0.09,en-US;q=0.8,en;q=0.7",
+      "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
       "Referer": "https://www.twse.com.tw/",
   }
 
   curr = datetime.now()
-  
-  # 【防呆修正】如果是週末，直接把起始日期推算到最近的星期五，避免抓取未開盤日
-  if curr.weekday() == 5:
-      curr -= timedelta(days=1)
-  elif curr.weekday() == 6:
-      curr -= timedelta(days=2)
-
   dates = []
 
-  while len(dates) < 25 and (datetime.now() - curr).days < 90:
-    if curr.weekday() < 5:
-      d_str = curr.strftime("%Y%m%d")
-      test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
-      try:
-        res = requests.get(test_url, headers=headers, timeout=5)
-        if res.status_code == 200:
-          data = res.json()
-          if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
-            dates.append(d_str)
-      except Exception:
-        pass
+  # 自動往前尋找最近 15 天內有開盤的交易日
+  for i in range(15):
+    d_str = curr.strftime("%Y%m%d")
+    test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
+    try:
+      res = requests.get(test_url, headers=headers, timeout=5)
+      if res.status_code == 200:
+        data = res.json()
+        if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
+          dates.append(d_str)
+          # 多收集前面 24 天用來計算連續買超
+          for j in range(1, 25):
+            prev_d = curr - timedelta(days=j)
+            if prev_d.weekday() < 5:
+              dates.append(prev_d.strftime("%Y%m%d"))
+          break
+    except Exception:
+      pass
     curr -= timedelta(days=1)
 
   if not dates:
     return {}, {}, {}, [], [], 22000.0, 0.0, 0.0
 
   latest_date = dates[0]
-  mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   market_dict = {}
   taiex_close = 0.0
   taiex_change = 0.0
   taiex_pct = 0.0
 
+  # 抓取大盤與個股收盤價
+  mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   try:
-    res = requests.get(mi_url, headers=headers, timeout=8)
-    if res.status_code == 200:
-      data = res.json()
+    res_mi = requests.get(mi_url, headers=headers, timeout=8)
+    if res_mi.status_code == 200:
+      data = res_mi.json()
       if data.get("stat") == "OK":
         for table in data.get("tables", []):
           title_str = str(table.get("title", ""))
@@ -125,12 +126,10 @@ def fetch_twse_data():
                       vals.append(float(v_str))
                     except:
                       pass
-
                   for num in vals:
                     if num > 3000:
                       taiex_close = num
                       break
-
                   for num in vals:
                     if abs(num) < 2000 and num != taiex_close and num != 0.0:
                       if -20 < num < 20:
@@ -140,28 +139,8 @@ def fetch_twse_data():
                 except:
                   pass
 
-        if taiex_close == 0.0:
-          for table in data.get("tables", []):
-            for row in table.get("data", []):
-              row_str = " ".join([str(x) for x in row])
-              if "發行量加權股價指數" in row_str:
-                for val in row:
-                  try:
-                    v_str = str(val).replace(",", "").replace("+", "").strip()
-                    num = float(v_str)
-                    if num > 3000:
-                      taiex_close = num
-                      break
-                  except:
-                    pass
-                if taiex_close > 0:
-                  break
-
-        # 讀取個股資料
-        for table in data.get("tables", []):
           if "data" in table:
-            rows = table["data"]
-            for row in rows:
+            for row in table["data"]:
               if len(row) >= 11:
                 code = str(row[0]).strip()
                 if len(code) == 4 and code.isdigit():
@@ -171,26 +150,24 @@ def fetch_twse_data():
                         str(row[2]).replace(",", "")
                     )
                     close_price_raw = str(row[8]).replace(",", "").strip()
-
-                    sign = 1.0
-                    raw_sign_col = str(row[9]).strip()
-                    if "-" in raw_sign_col or "跌" in raw_sign_col:
-                      sign = -1.0
-
-                    change_raw = str(row[10]).replace(",", "").strip()
-
                     if close_price_raw in ["--", "-", ""]:
                       continue
                     close_price = float(close_price_raw)
 
-                    change_val = 0.0
-                    if change_raw not in ["--", "-", ""]:
-                      change_val = float(change_raw) * sign
+                    sign = (
+                        -1.0
+                        if ("-" in str(row[9]) or "跌" in str(row[9]))
+                        else 1.0
+                    )
+                    change_raw = str(row[10]).replace(",", "").strip()
+                    change_val = (
+                        (float(change_raw) * sign)
+                        if change_raw not in ["--", "-", ""]
+                        else 0.0
+                    )
 
-                    pct_val = 0.0
                     prev_p = close_price - change_val
-                    if prev_p > 0:
-                      pct_val = (change_val / prev_p) * 100
+                    pct_val = (change_val / prev_p) * 100 if prev_p > 0 else 0.0
 
                     market_dict[code] = {
                         "官方名稱": name,
@@ -199,10 +176,10 @@ def fetch_twse_data():
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
                     }
-                  except Exception:
+                  except:
                     continue
   except Exception as e:
-    print(f"MI_INDEX error: {e}")
+    print(f"MI error: {e}")
 
   if taiex_close == 0.0:
     taiex_close = 22000.0
@@ -210,31 +187,31 @@ def fetch_twse_data():
   latest_foreign_shares = {}
   latest_trust_shares = {}
   hist_foreign_shares = {}
-  for i, d_str in enumerate(dates):
+
+  # 抓取法人歷史資料
+  for i, d_str in enumerate(dates[:25]):
     t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
-      res = requests.get(t86_url, headers=headers, timeout=5)
-      if res.status_code == 200:
-        data = res.json()
-        if data.get("stat") == "OK":
-          raw_rows = data.get("data", [])
+      res_t86 = requests.get(t86_url, headers=headers, timeout=5)
+      if res_t86.status_code == 200:
+        t86_data = res_t86.json()
+        if t86_data.get("stat") == "OK":
           day_map = {}
-          for r in raw_rows:
+          for r in t86_data.get("data", []):
             if len(r) > 10:
               code = r[0].strip()
               if len(code) == 4 and code.isdigit():
                 try:
                   net_foreign = int(r[4].replace(",", ""))
                   net_trust = int(r[10].replace(",", ""))
-
                   day_map[code] = net_foreign
                   if i == 0:
                     latest_foreign_shares[code] = net_foreign
                     latest_trust_shares[code] = net_trust
-                except Exception:
+                except:
                   continue
           hist_foreign_shares[d_str] = day_map
-    except Exception:
+    except:
       continue
 
   return (
@@ -279,7 +256,7 @@ if latest_date:
       ),
   )
 else:
-  st.error("⚠️ 無法取得證交所官方資料，請重新整理頁面。")
+  st.error("⚠️ 無法取得證交所官方資料，請檢查網路連線後重新整理頁面。")
 
 # ==================== 側邊欄：12大權值股綜合貢獻點數 ====================
 st.sidebar.markdown("---")
@@ -429,7 +406,7 @@ if market_dict:
         0, "排名", range(1, len(df_top100_foreign) + 1)
     )
 
-    # 2. 成交值 / 市值 Top 100
+    # 2. 市值 Top 100
     df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
@@ -482,12 +459,6 @@ if market_dict:
           }
       )
 
-      df_industry_summary = df_industry_summary[
-          (df_industry_summary["平均雙法人總集中度(%)"] > 0)
-          & (df_industry_summary["平均外本比(%)"] >= 0)
-          & (df_industry_summary["平均投本比(%)"] >= 0)
-      ]
-
       df_industry_summary["籌碼集中度"] = round(
           df_industry_summary["平均雙法人總集中度(%)"]
           * np.sqrt(df_industry_summary["股票檔數"])
@@ -512,13 +483,9 @@ if market_dict:
       df_industry_summary = df_industry_summary[
           [c for c in cols_order if c in df_industry_summary.columns]
       ]
-
-      if not df_industry_summary.empty:
-        df_industry_summary.insert(
-            0, "排名", range(1, len(df_industry_summary) + 1)
-        )
-      else:
-        df_industry_summary.insert(0, "排名", [])
+      df_industry_summary.insert(
+          0, "排名", range(1, len(df_industry_summary) + 1)
+      )
     else:
       df_industry_summary = pd.DataFrame(
           columns=[
@@ -557,7 +524,7 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 (4 個分頁) ====================
+    # ==================== 分頁顯示排行榜 ====================
     tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
         [
             "📈 族群籌碼平均排行",
@@ -676,7 +643,7 @@ if market_dict:
           ],
           key="editor_top100",
       )
-      if st.button("💾 儲存並寫入永久檔案 (成交值 Top 100)", type="secondary"):
+      if st.button("💾 儲存並寫入永久檔案 (市值 Top 100)", type="secondary"):
         for _, row in edited_df_top100.iterrows():
           c = row["代號"]
           ind = row["族群"]

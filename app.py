@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 import os
+import time
 import numpy as np
 import pandas as pd
 import requests
@@ -61,12 +62,22 @@ def fetch_twse_data():
       "User-Agent": (
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
           "AppleWebKit/537.36 (KHTML, like Gecko) "
-          "Chrome/122.0.0.0 Safari/537.36"
+          "Chrome/124.0.0.0 Safari/537.36"
       ),
       "Accept": "application/json, text/javascript, */*; q=0.01",
       "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-      "Referer": "https://www.twse.com.tw/",
+      "Referer": "https://www.twse.com.tw/zh/trading/fund/T86.html",
+      "X-Requested-With": "XMLHttpRequest",
   }
+
+  session = requests.Session()
+  session.headers.update(headers)
+
+  # 嘗試取得 Session Cookie 突破防護
+  try:
+    session.get("https://www.twse.com.tw/zh/trading/fund/T86.html", timeout=5)
+  except:
+    pass
 
   curr = datetime.now()
   dates = []
@@ -76,7 +87,7 @@ def fetch_twse_data():
     d_str = curr.strftime("%Y%m%d")
     test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
-      res = requests.get(test_url, headers=headers, timeout=5)
+      res = session.get(test_url, timeout=6)
       if res.status_code == 200:
         data = res.json()
         if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
@@ -90,8 +101,10 @@ def fetch_twse_data():
     except Exception:
       pass
     curr -= timedelta(days=1)
+    time.sleep(0.2)  # 避免請求過快被擋
 
   if not dates:
+    # 失敗時的回退預設（以防全面被鎖）
     return {}, {}, {}, [], [], 22000.0, 0.0, 0.0
 
   latest_date = dates[0]
@@ -103,7 +116,7 @@ def fetch_twse_data():
   # 抓取大盤與個股收盤價
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   try:
-    res_mi = requests.get(mi_url, headers=headers, timeout=8)
+    res_mi = session.get(mi_url, timeout=8)
     if res_mi.status_code == 200:
       data = res_mi.json()
       if data.get("stat") == "OK":
@@ -188,11 +201,11 @@ def fetch_twse_data():
   latest_trust_shares = {}
   hist_foreign_shares = {}
 
-  # 抓取法人歷史資料
+  # 抓取法人歷史資料 (帶延遲避免觸發防爬蟲機制)
   for i, d_str in enumerate(dates[:25]):
     t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
-      res_t86 = requests.get(t86_url, headers=headers, timeout=5)
+      res_t86 = session.get(t86_url, timeout=5)
       if res_t86.status_code == 200:
         t86_data = res_t86.json()
         if t86_data.get("stat") == "OK":
@@ -212,7 +225,8 @@ def fetch_twse_data():
                   continue
           hist_foreign_shares[d_str] = day_map
     except:
-      continue
+      pass
+    time.sleep(0.15)
 
   return (
       market_dict,
@@ -226,7 +240,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料..."):
+with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料（加強防禦連線中）..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -256,7 +270,9 @@ if latest_date:
       ),
   )
 else:
-  st.error("⚠️ 無法取得證交所官方資料，請檢查網路連線後重新整理頁面。")
+  st.error(
+      "⚠️ 目前證交所連線受阻或正被防火牆限制。請稍候幾分鐘再重新整理頁面。"
+  )
 
 # ==================== 側邊欄：12大權值股綜合貢獻點數 ====================
 st.sidebar.markdown("---")
@@ -530,7 +546,7 @@ if market_dict:
             "📈 族群籌碼平均排行",
             "🎯 雙榜交叉比對",
             "🔥 外資買賣超 Top 100",
-            "💰 成交值 Top 100",
+            "💰 市值 Top 100",
         ]
     )
 
@@ -657,4 +673,7 @@ if market_dict:
         st.rerun()
 
 else:
-  st.info("💡 提示：請重新整理頁面以順利載入資料。")
+  st.info(
+      "💡 提示：目前為非營業日或證交所連線忙碌中，請稍後點擊右上角「Clear"
+      " cache」重試。"
+  )

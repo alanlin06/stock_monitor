@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 import json
 import os
+import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
@@ -304,8 +305,6 @@ if market_dict:
     df_grouped_raw = df_cross[df_cross["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
-      import numpy as np
-
       df_industry_summary = (
           df_grouped_raw.groupby("族群")
           .agg(
@@ -431,8 +430,39 @@ if market_dict:
             df_industry_summary,
             use_container_width=True,
             hide_index=True,
-            height=500,
+            height=400,
         )
+
+        st.markdown("---")
+        st.markdown("### 🏆 族群內籌碼最集中前三名強勢股")
+
+        industry_list = df_industry_summary["族群"].tolist()
+
+        if industry_list:
+          selected_industry = st.selectbox(
+              "請選擇想深入查看的族群", industry_list, key="selected_ind_for_top3"
+          )
+
+          if selected_industry:
+            # 從完整明細中抓出該族群的所有股票
+            df_ind_stocks = df_all_enriched[
+                df_all_enriched["族群"] == selected_industry
+            ].copy()
+
+            if not df_ind_stocks.empty:
+              # 依照雙法人總集中度排序取前三名
+              df_top3 = df_ind_stocks.sort_values(
+                  by="雙法人總集中度(%)", ascending=False
+              ).head(3)
+              df_top3.insert(0, "族群排名", range(1, len(df_top3) + 1))
+
+              st.info(
+                  f"📊 目前選定族群：**{selected_industry}**（共涵蓋"
+                  f" {len(df_ind_stocks)} 檔股票）"
+              )
+              st.dataframe(df_top3, use_container_width=True, hide_index=True)
+            else:
+              st.warning(f"目前「{selected_industry}」族群底下沒有找到對應的股票資料。")
       else:
         st.warning("目前無符合條件的族群資料。")
 
@@ -498,7 +528,7 @@ if market_dict:
           disabled=[
               col
               for col in df_top100.columns
-              if col != "族網" and col != "排名"
+              if col != "族群" and col != "排名"
           ],
           key="editor_top100",
       )

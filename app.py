@@ -85,7 +85,7 @@ def fetch_twse_data():
     curr -= timedelta(days=1)
 
   if not dates:
-    return {}, {}, {}, [], 0.0
+    return {}, {}, {}, [], 22000.0
 
   latest_date = dates[0]
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
@@ -99,19 +99,17 @@ def fetch_twse_data():
       if data.get("stat") == "OK":
         # 尋找加權指數收盤價
         for table in data.get("tables", []):
-          if "data" in table:
-            for row in table["data"]:
-              if (
-                  len(row) > 0
-                  and ("發行量加權股價指數" in str(row[0]) or "發行量加權指數" in str(row))
-              ):
+          title_str = str(table.get("title", ""))
+          if "發行量加權股價指數" in title_str or "指數" in title_str:
+            for row in table.get("data", []):
+              if len(row) > 1 and "發行量加權股價指數" in str(row[0]):
                 try:
-                  # 通常收盤指數在特定欄位，這裡嘗試抓取數值
+                  # 通常收盤指數在索引 1 或 4，嘗試轉換大於 1000 的數字
                   for val in row:
                     v_str = str(val).replace(",", "")
                     try:
                       num = float(v_str)
-                      if num > 1000:  # 排除日期或小數
+                      if num > 1000:
                         taiex_close = num
                         break
                     except:
@@ -119,15 +117,25 @@ def fetch_twse_data():
                 except:
                   pass
 
-          # 如果上面沒抓到，嘗試常見的 MI_INDEX 報酬/指數表格
-          if "title" in table and "指數" in str(table["title"]):
+        # 廣泛搜尋整個 json 找發行量加權股價指數
+        if taiex_close == 0.0:
+          for table in data.get("tables", []):
             for row in table.get("data", []):
-              if len(row) > 4 and "發行量加權股價指數" in str(row[0]):
-                try:
-                  taiex_close = float(row[4].replace(",", ""))
-                except:
-                  pass
+              row_str = " ".join([str(x) for x in row])
+              if "發行量加權股價指數" in row_str:
+                for val in row:
+                  try:
+                    v_str = str(val).replace(",", "").replace("+", "")
+                    num = float(v_str)
+                    if num > 3000:  # 大盤指數合理範圍
+                      taiex_close = num
+                      break
+                  except:
+                    pass
+                if taiex_close > 0:
+                  break
 
+        # 抓取個股資料
         for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
@@ -140,7 +148,6 @@ def fetch_twse_data():
                         row[2].replace(",", "")
                     )
                     close_price = float(row[8].replace(",", ""))
-                    # 嘗試計算漲跌幅 (如果有漲跌點數可以拿來算貢獻點數)
                     change_val = 0.0
                     try:
                       change_val = float(
@@ -160,9 +167,8 @@ def fetch_twse_data():
   except Exception as e:
     print(f"MI_INDEX error: {e}")
 
-  # 若沒抓到加權指數，給個預設安全防護或透過大盤爬蟲替代
   if taiex_close == 0.0:
-    taiex_close = 22000.0  # 預設基準
+    taiex_close = 22000.0  # 安全防護預設值
 
   latest_foreign_shares = {}
   latest_trust_shares = {}
@@ -628,13 +634,9 @@ if market_dict:
       rows_12 = []
       for item in top12_data:
         code = item["代號"]
-        # 從 market_dict 中取得收盤價或漲跌
         stock_info = market_dict.get(code, {})
         close_p = stock_info.get("收盤價", 0.0)
-        change_p = stock_info.get("漲跌", 0.0)
 
-        # 理論換算影響點數 = 大盤點數 * (權重占比 / 100) * (假設當日個股漲跌幅，此處以權重對應全盤點數換算)
-        # 這裡提供「該權重占大盤總點數的等效基底點數」以及「結合個股當日漲跌的約略貢獻點數」
         weight_ratio = item["權重占比"] / 100.0
         base_points_equivalent = taiex_close * weight_ratio
 

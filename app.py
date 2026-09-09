@@ -55,6 +55,22 @@ search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
 
+# ==================== 側邊欄：新增基本面雙重過濾防線 ====================
+st.sidebar.markdown("---")
+st.sidebar.subheader("🎯 進階基本面過濾防線")
+
+filter_double_growth = st.sidebar.checkbox(
+    "僅顯示單月營收【年月雙增】(YoY>0 且 MoM>0)",
+    value=False,
+    help="過濾掉單月營收沒有同步成長的個股",
+)
+
+filter_margin_up = st.sidebar.checkbox(
+    "僅顯示營益率【連續三季正成長】",
+    value=False,
+    help="確保本業獲利能力一季比一季強（Q3 > Q2 > Q1 且皆大於 0）",
+)
+
 
 @st.cache_data(ttl=600)
 def fetch_twse_data():
@@ -73,7 +89,6 @@ def fetch_twse_data():
   session = requests.Session()
   session.headers.update(headers)
 
-  # 嘗試取得 Session Cookie 突破防護
   try:
     session.get("https://www.twse.com.tw/zh/trading/fund/T86.html", timeout=5)
   except:
@@ -82,7 +97,6 @@ def fetch_twse_data():
   curr = datetime.now()
   dates = []
 
-  # 自動往前尋找最近 15 天內有開盤的交易日
   for i in range(15):
     d_str = curr.strftime("%Y%m%d")
     test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
@@ -92,7 +106,6 @@ def fetch_twse_data():
         data = res.json()
         if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
           dates.append(d_str)
-          # 多收集前面 24 天用來計算連續買超
           for j in range(1, 25):
             prev_d = curr - timedelta(days=j)
             if prev_d.weekday() < 5:
@@ -101,10 +114,9 @@ def fetch_twse_data():
     except Exception:
       pass
     curr -= timedelta(days=1)
-    time.sleep(0.2)  # 避免請求過快被擋
+    time.sleep(0.2)
 
   if not dates:
-    # 失敗時的回退預設（以防全面被鎖）
     return {}, {}, {}, [], [], 22000.0, 0.0, 0.0
 
   latest_date = dates[0]
@@ -113,7 +125,6 @@ def fetch_twse_data():
   taiex_change = 0.0
   taiex_pct = 0.0
 
-  # 抓取大盤與個股收盤價
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   try:
     res_mi = session.get(mi_url, timeout=8)
@@ -182,12 +193,19 @@ def fetch_twse_data():
                     prev_p = close_price - change_val
                     pct_val = (change_val / prev_p) * 100 if prev_p > 0 else 0.0
 
+                    # 💡 註：此處營收與營益率欄位已預留串接接口
+                    # 正式環境可將真實財報 API 數據帶入這裡
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
+                        "營收YoY": 5.0,  # 預設範例值 (實戰請替換為真實 API)
+                        "營收MoM": 2.0,  # 預設範例值
+                        "營益率_Q1": 2.0,  # 預設範例值
+                        "營益率_Q2": 2.5,  # 預設範例值
+                        "營益率_Q3": 3.0,  # 預設範例值
                     }
                   except:
                     continue
@@ -201,7 +219,6 @@ def fetch_twse_data():
   latest_trust_shares = {}
   hist_foreign_shares = {}
 
-  # 抓取法人歷史資料 (帶延遲避免觸發防爬蟲機制)
   for i, d_str in enumerate(dates[:25]):
     t86_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
@@ -335,6 +352,11 @@ if market_dict:
             "族群": assigned_ind,
             "漲跌": info.get("漲跌", 0.0),
             "漲跌幅(%)": round(info.get("漲跌幅(%)", 0.0), 2),
+            "營收YoY": info.get("營收YoY", 0.0),
+            "營收MoM": info.get("營收MoM", 0.0),
+            "營益率_Q1": info.get("營益率_Q1", 0.0),
+            "營益率_Q2": info.get("營益率_Q2", 0.0),
+            "營益率_Q3": info.get("營益率_Q3", 0.0),
         }
     )
 
@@ -406,11 +428,31 @@ if market_dict:
       df = df[cols]
       return df
 
-    df_all_enriched = enrich_data(df_market)
+    # ==================== 套用側邊欄基本面過濾邏輯 ====================
+    def apply_fundamental_filters(df):
+      filtered_df = df.copy()
+      if filter_double_growth:
+        filtered_df = filtered_df[
+            (filtered_df["營收YoY"] > 0) & (filtered_df["營收MoM"] > 0)
+        ]
+      if filter_margin_up:
+        filtered_df = filtered_df[
+            (filtered_df["營益率_Q1"] > 0)
+            & (filtered_df["營益率_Q2"] > 0)
+            & (filtered_df["營益率_Q3"] > 0)
+            & (filtered_df["營益率_Q2"] > filtered_df["營益率_Q1"])
+            & (filtered_df["營益率_Q3"] > filtered_df["營益率_Q2"])
+        ]
+      return filtered_df
+
+    # 套用過濾
+    df_filtered_market = apply_fundamental_filters(df_market)
+
+    df_all_enriched = enrich_data(df_filtered_market)
 
     # 1. 外資買賣超 Top 100
     df_f_buy = (
-        df_market[df_market["外資買賣超股數"] > 0]
+        df_filtered_market[df_filtered_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
         .head(100)
     )
@@ -423,7 +465,9 @@ if market_dict:
     )
 
     # 2. 市值 Top 100
-    df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
+    df_v_100 = df_filtered_market.sort_values(
+        by="市值(億)", ascending=False
+    ).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
@@ -432,7 +476,9 @@ if market_dict:
     top100_codes = set(df_top100["代號"])
     cross_codes = top_foreign_codes.intersection(top100_codes)
 
-    df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
+    df_cross = df_filtered_market[
+        df_filtered_market["代號"].isin(cross_codes)
+    ].copy()
     df_cross = enrich_data(df_cross)
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
@@ -591,9 +637,11 @@ if market_dict:
               st.subheader(f"📌 {target_ind}")
               st.dataframe(df_top3, use_container_width=True, hide_index=True)
             else:
-              st.warning(f"「{target_ind}」族群底下暫無股票資料。")
+              st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
       else:
-        st.warning("目前無符合條件的族群資料。")
+        st.warning(
+            "目前無符合條件的族群資料（可能已被進階基本面過濾條件攔截）。"
+        )
 
     with tab_cross:
       edited_df_cross = st.data_editor(

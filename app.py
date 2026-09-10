@@ -492,7 +492,7 @@ if market_dict:
               平均投本比_pct=("投本比(%)", "mean"),
               平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
               外資總買超張數=("外資買賣超張數", "sum"),
-              投信總買超張數=("投信買賣超張數", "sum"),  # 加入投信總買超張數
+              投信總買超張數=("投信買賣超張數", "sum"),
               族群總成交值=("成交值(億)", "sum"),
           )
           .reset_index()
@@ -522,16 +522,16 @@ if market_dict:
           }
       )
 
-      # 同時納入外資與投信買超張數的對數權重計算
-      total_法人買超張數 = (
-          df_industry_summary["外資總買超張數"]
-          + df_industry_summary["投信總買超張數"]
-      ).clip(lower=0)
-
+      # 💡 核心修改：同時將外資與投信的總買超張數作為對數乘數權重納入計算
       df_industry_summary["籌碼集中度"] = round(
           df_industry_summary["平均雙法人總集中度(%)"]
           * np.sqrt(df_industry_summary["股票檔數"])
-          * np.log1p(total_法人買超張數),
+          * np.log1p(
+              df_industry_summary["外資總買超張數"].clip(lower=0)
+          )  # 外資規模權重
+          * np.log1p(
+              df_industry_summary["投信總買超張數"].clip(lower=0)
+          ),  # 投信規模權重
           2,
       )
 
@@ -636,7 +636,6 @@ if market_dict:
 
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
-            # 動態抓取交集內該族群的所有股票，不限制前三名
             df_ind_stocks = df_cross[df_cross["族群"] == target_ind].copy()
 
             if not df_ind_stocks.empty:

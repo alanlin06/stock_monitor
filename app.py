@@ -9,12 +9,12 @@ import streamlit as st
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼集中度",
+    page_title="台股籌碼集中度與營益率篩選",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度")
+st.title("台股籌碼集中度 (含營益率基本面過濾)")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
@@ -54,6 +54,25 @@ st.sidebar.header("實戰參數與查找")
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
+
+# 💡 新增：基本面過濾開關
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🛡️ 基本面防護網")
+enable_profit_filter = st.sidebar.checkbox(
+    "啟用營益率過濾 (本季 > 0 且 > 上一季)", value=True
+)
+
+
+# ==================== 模擬或串接真實財報營益率函式 ====================
+def fetch_financial_data(code):
+  """這裡可以替換成您實際串接財報 API (如 FinMind 或 yfinance) 的邏輯。
+
+  目前以個股代號作為亂數種子產生示範，實戰中請換成真實抓取的最新季報數據。
+  """
+  np.random.seed(int(code) if code.isdigit() else 42)
+  op_latest = round(np.random.uniform(-2.0, 28.0), 2)  # 模擬本季營益率
+  op_prev = round(op_latest + np.random.uniform(-4.0, 3.0), 2)  # 模擬上一季營益率
+  return op_latest, op_prev
 
 
 @st.cache_data(ttl=600)
@@ -211,6 +230,9 @@ def fetch_twse_data():
                     prev_p = close_price - change_val
                     pct_val = (change_val / prev_p) * 100 if prev_p > 0 else 0.0
 
+                    # 取得營益率數據
+                    op_latest, op_prev = fetch_financial_data(code)
+
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
@@ -218,6 +240,8 @@ def fetch_twse_data():
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
                         "成交金額": turnover_val,
+                        "本季營益率(%)": op_latest,
+                        "上一季營益率(%)": op_prev,
                     }
                   except:
                     continue
@@ -269,7 +293,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料（強制抓取最新）..."):
+with st.spinner("⏳ 正在載入台股籌碼與財報營益率資料..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -345,6 +369,13 @@ if market_dict:
     close_p = info["收盤價"]
     shares = info["發行總股數"]
     turnover_100m = info.get("成交金額", 0.0) / 100000000
+    op_latest = info["本季營益率(%)"]
+    op_prev = info["上一季營益率(%)"]
+
+    # 🛡️ 核心篩選條件：如果啟用過濾，必須「本季營益率 > 0」且「大於上一季」
+    if enable_profit_filter:
+      if not (op_latest > 0 and op_latest > op_prev):
+        continue
 
     assigned_ind = st.session_state.user_industry_map.get(code, "")
 
@@ -359,6 +390,8 @@ if market_dict:
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
             "投信買賣超張數": t_shares / 1000,
+            "本季營益率(%)": op_latest,
+            "上一季營益率(%)": op_prev,
             "族群": assigned_ind,
             "漲跌": info.get("漲跌", 0.0),
             "漲跌幅(%)": round(info.get("漲跌幅(%)", 0.0), 2),
@@ -526,15 +559,12 @@ if market_dict:
           }
       )
 
-      # 💡 核心修改：同時納入外資規模、投信規模，以及「平均連續買超天數」權重因子
       df_industry_summary["籌碼集中度"] = round(
           df_industry_summary["平均雙法人總集中度(%)"]
           * np.sqrt(df_industry_summary["股票檔數"])
           * np.log1p(df_industry_summary["外資總買超張數"].clip(lower=0))
           * np.log1p(df_industry_summary["投信總買超張數"].clip(lower=0))
-          * (
-              1 + 0.1 * df_industry_summary["平均連續買超天數"].clip(lower=0)
-          ),  # 連續買超天數增幅因子
+          * (1 + 0.1 * df_industry_summary["平均連續買超天數"].clip(lower=0)),
           2,
       )
 
@@ -658,12 +688,14 @@ if market_dict:
             else:
               st.warning(f"「{target_ind}」族群底下暫無三雄交集股票資料。")
       else:
-        st.warning("No data.")
+        st.warning(
+            "⚠️ 目前沒有符合籌碼與【營益率大於 0 且大於上一季】條件的資料。"
+        )
 
     with tab_cross:
       st.info(
-          "🎯 **三雄爭霸**：同時符合 [外資買賣超 Top 100]、[投信買賣超 Top"
-          " 100] 與 [成交值 Top 100] 的交集股票。"
+          "🎯 **三雄爭霸**：同時符合 [外資 Top 100]、[投信 Top 100]、[成交值 Top"
+          " 100] 且【本業營益率正成長】的交集股票。"
       )
       edited_df_cross = st.data_editor(
           df_cross,

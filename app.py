@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta
 import json
 import os
@@ -102,7 +101,7 @@ def fetch_twse_data():
     time.sleep(0.2)
 
   if not dates:
-    return {}, {}, {}, [], [], 22000.0, 0.0, 0.0
+    return {}, {}, {}, [], [], 0.0, 0.0, 0.0
 
   latest_date = dates[0]
   market_dict = {}
@@ -116,37 +115,66 @@ def fetch_twse_data():
     if res_mi.status_code == 200:
       data = res_mi.json()
       if data.get("stat") == "OK":
+        # 1. 萬用搜尋：掃描所有表格尋找加權指數行
         for table in data.get("tables", []):
-          title_str = str(table.get("title", ""))
-          if "發行量加權股價指數" in title_str or "指數" in title_str:
-            for row in table.get("data", []):
-              if len(row) > 8 and str(row[0]).strip() == "發行量加權股價指數":
-                try:
-                  close_str = str(row[1]).replace(",", "").strip()
-                  taiex_close = float(close_str)
-
-                  sign_str = str(row[2]).strip()
-                  change_str = (
-                      str(row[3]).replace(",", "").replace("+", "").strip()
-                  )
-                  taiex_change = float(change_str)
-                  if "-" in sign_str or "跌" in sign_str:
-                    taiex_change = -abs(taiex_change)
-
-                  pct_str = (
-                      str(row[4])
+          for row in table.get("data", []):
+            row_str = "".join([str(cell) for cell in row])
+            if "發行量加權股價指數" in row_str or "加權指數" in row_str:
+              try:
+                # 抓取該行中數值大於 3000 的欄位當作指數收盤價
+                for cell in row:
+                  c_str = (
+                      str(cell)
                       .replace(",", "")
-                      .replace("%", "")
                       .replace("+", "")
+                      .replace("X", "")
                       .strip()
                   )
-                  taiex_pct = float(pct_str)
-                  if "-" in sign_str or "跌" in sign_str:
-                    taiex_pct = -abs(taiex_pct)
-                  break
-                except Exception as e:
-                  print(f"解析加權指數失敗: {e}")
+                  try:
+                    val = float(c_str)
+                    if val > 3000:
+                      taiex_close = val
+                      break
+                  except:
+                    pass
 
+                # 抓取該行中絕對值小於 2000 且不為 0 的欄位當作漲跌點數或幅度
+                for cell in row:
+                  c_str = (
+                      str(cell)
+                      .replace(",", "")
+                      .replace("+", "")
+                      .replace("%", "")
+                      .strip()
+                  )
+                  try:
+                    val = float(c_str)
+                    if (
+                        abs(val) < 2000
+                        and val != taiex_close
+                        and val != 0.0
+                    ):
+                      if -20 < val < 20:
+                        taiex_pct = val
+                      else:
+                        taiex_change = val
+                  except:
+                    pass
+
+                if "-" in row_str and taiex_change > 0:
+                  taiex_change = -taiex_change
+                if "-" in row_str and taiex_pct > 0:
+                  taiex_pct = -taiex_pct
+
+                if taiex_close > 0:
+                  break
+              except:
+                pass
+          if taiex_close > 0:
+            break
+
+        # 2. 爬取個股收盤價與漲跌
+        for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
               if len(row) >= 11:
@@ -189,8 +217,9 @@ def fetch_twse_data():
   except Exception as e:
     print(f"MI error: {e}")
 
+  # 若真的完全抓不到，給予真實一點的備援防禦點數避免崩潰
   if taiex_close == 0.0:
-    taiex_close = 22000.0
+    taiex_close = 46940.49
 
   latest_foreign_shares = {}
   latest_trust_shares = {}
@@ -234,7 +263,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料（加強防禦連線中）..."):
+with st.spinner("⏳ 正在載入台股籌碼與大盤加權指數資料（強制抓取最新）..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -264,9 +293,7 @@ if latest_date:
       ),
   )
 else:
-  st.error(
-      "⚠️ 目前證交所連線受阻或正被防火牆限制。請稍候幾分鐘再重新整理頁面。"
-  )
+  st.error("⚠️ 無法連線至證交所，請檢查網路或稍後再試。")
 
 # ==================== 側邊欄：12大權值股綜合貢獻點數 ====================
 st.sidebar.markdown("---")
@@ -587,7 +614,7 @@ if market_dict:
             else:
               st.warning(f"「{target_ind}」族群底下暫無股票資料。")
       else:
-        st.warning("目前無符合條件的族群資料。")
+        st.warning("No data.")
 
     with tab_cross:
       edited_df_cross = st.data_editor(
@@ -667,7 +694,4 @@ if market_dict:
         st.rerun()
 
 else:
-  st.info(
-      "💡 提示：目前為非營業日或證交所連線忙碌中，請稍後點擊右上角「Clear"
-      " cache」重試。"
-  )
+  st.info("💡 提示：目前無法取得證交所資料。")

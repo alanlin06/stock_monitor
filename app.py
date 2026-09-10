@@ -493,6 +493,7 @@ if market_dict:
               平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
               外資總買超張數=("外資買賣超張數", "sum"),
               投信總買超張數=("投信買賣超張數", "sum"),
+              平均連續買超天數=("連續買超天數", "mean"),
               族群總成交值=("成交值(億)", "sum"),
           )
           .reset_index()
@@ -513,6 +514,9 @@ if market_dict:
       df_industry_summary["投信總買超張數"] = df_industry_summary[
           "投信總買超張數"
       ].round(0)
+      df_industry_summary["平均連續買超天數"] = df_industry_summary[
+          "平均連續買超天數"
+      ].round(1)
 
       df_industry_summary = df_industry_summary.rename(
           columns={
@@ -522,16 +526,15 @@ if market_dict:
           }
       )
 
-      # 💡 核心修改：同時將外資與投信的總買超張數作為對數乘數權重納入計算
+      # 💡 核心修改：同時納入外資規模、投信規模，以及「平均連續買超天數」權重因子
       df_industry_summary["籌碼集中度"] = round(
           df_industry_summary["平均雙法人總集中度(%)"]
           * np.sqrt(df_industry_summary["股票檔數"])
-          * np.log1p(
-              df_industry_summary["外資總買超張數"].clip(lower=0)
-          )  # 外資規模權重
-          * np.log1p(
-              df_industry_summary["投信總買超張數"].clip(lower=0)
-          ),  # 投信規模權重
+          * np.log1p(df_industry_summary["外資總買超張數"].clip(lower=0))
+          * np.log1p(df_industry_summary["投信總買超張數"].clip(lower=0))
+          * (
+              1 + 0.1 * df_industry_summary["平均連續買超天數"].clip(lower=0)
+          ),  # 連續買超天數增幅因子
           2,
       )
 
@@ -548,6 +551,7 @@ if market_dict:
           "平均雙法人總集中度(%)",
           "外資總買超張數",
           "投信總買超張數",
+          "平均連續買超天數",
           "族群總成交值",
       ]
       df_industry_summary = df_industry_summary[
@@ -568,6 +572,7 @@ if market_dict:
               "平均雙法人總集中度(%)",
               "外資總買超張數",
               "投信總買超張數",
+              "平均連續買超天數",
               "族群總成交值",
           ]
       )

@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度")
+st.title("台股籌碼集中度 - 三雄爭霸版")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
@@ -115,13 +115,11 @@ def fetch_twse_data():
     if res_mi.status_code == 200:
       data = res_mi.json()
       if data.get("stat") == "OK":
-        # 1. 萬用搜尋：掃描所有表格尋找加權指數行
         for table in data.get("tables", []):
           for row in table.get("data", []):
             row_str = "".join([str(cell) for cell in row])
             if "發行量加權股價指數" in row_str or "加權指數" in row_str:
               try:
-                # 抓取該行中數值大於 3000 的欄位當作指數收盤價
                 for cell in row:
                   c_str = (
                       str(cell)
@@ -138,7 +136,6 @@ def fetch_twse_data():
                   except:
                     pass
 
-                # 抓取該行中絕對值小於 2000 且不為 0 的欄位當作漲跌點數或幅度
                 for cell in row:
                   c_str = (
                       str(cell)
@@ -173,7 +170,6 @@ def fetch_twse_data():
           if taiex_close > 0:
             break
 
-        # 2. 爬取個股收盤價與漲跌
         for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
@@ -217,7 +213,6 @@ def fetch_twse_data():
   except Exception as e:
     print(f"MI error: {e}")
 
-  # 若真的完全抓不到，給予真實一點的備援防禦點數避免崩潰
   if taiex_close == 0.0:
     taiex_close = 46940.49
 
@@ -443,23 +438,39 @@ if market_dict:
         0, "排名", range(1, len(df_top100_foreign) + 1)
     )
 
-    # 2. 市值 Top 100
+    # 2. 投信買賣超 Top 100
+    df_t_buy = (
+        df_market[df_market["投信買賣超股數"] > 0]
+        .sort_values(by="投信買賣超張數", ascending=False)
+        .head(100)
+    )
+    df_top100_trust = enrich_data(df_t_buy)
+    df_top100_trust = df_top100_trust.sort_values(
+        by="雙法人總集中度(%)", ascending=False
+    )
+    df_top100_trust.insert(0, "排名", range(1, len(df_top100_trust) + 1))
+
+    # 3. 市值 Top 100
     df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
-    df_top100 = enrich_data(df_v_100)
-    df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
+    df_top100_val = enrich_data(df_v_100)
+    df_top100_val.insert(0, "排名", range(1, len(df_top100_val) + 1))
 
-    # 3. 雙榜交叉比對
+    # 4. 三雄爭霸 (三向交叉比對：外資Top100 ∩ 投信Top100 ∩ 市值Top100)
     top_foreign_codes = set(df_top100_foreign["代號"])
-    top100_codes = set(df_top100["代號"])
-    cross_codes = top_foreign_codes.intersection(top100_codes)
+    top_trust_codes = set(df_top100_trust["代號"])
+    top_val_codes = set(df_top100_val["代號"])
 
-    df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
-    df_cross = enrich_data(df_cross)
-    df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
-    df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
+    cross_codes_3 = top_foreign_codes.intersection(
+        top_trust_codes, top_val_codes
+    )
 
-    # ==================== 族群平均集中度統計 ====================
-    df_grouped_raw = df_cross[df_cross["族群"].str.strip() != ""]
+    df_cross_3 = df_market[df_market["代號"].isin(cross_codes_3)].copy()
+    df_cross_3 = enrich_data(df_cross_3)
+    df_cross_3 = df_cross_3.sort_values(by="雙法人總集中度(%)", ascending=False)
+    df_cross_3.insert(0, "排序", range(1, len(df_cross_3) + 1))
+
+    # ==================== 族群平均集中度統計：群雄並起 ====================
+    df_grouped_raw = df_cross_3[df_cross_3["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
       df_industry_summary = (
@@ -562,11 +573,18 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
+    (
+        tab_ind_summary,
+        tab_cross3,
+        tab_top100_f,
+        tab_top100_t,
+        tab_top100_v,
+    ) = st.tabs(
         [
-            "📈 族群籌碼平均排行",
-            "🎯 雙榜交叉比對",
+            "👑 群雄並起 (族群籌碼平均排行)",
+            "⚔️ 三雄爭霸 (三向交叉比對)",
             "🔥 外資買賣超 Top 100",
+            "🛡️ 投信買賣超 Top 100",
             "💰 市值 Top 100",
         ]
     )
@@ -614,24 +632,24 @@ if market_dict:
             else:
               st.warning(f"「{target_ind}」族群底下暫無股票資料。")
       else:
-        st.warning("No data.")
+        st.warning("⚠️ 目前無符合三雄爭霸條件的族群資料。")
 
-    with tab_cross:
-      edited_df_cross = st.data_editor(
-          df_cross,
+    with tab_cross3:
+      edited_df_cross3 = st.data_editor(
+          df_cross_3,
           use_container_width=True,
           hide_index=True,
           height=500,
           disabled=[
               col
-              for col in df_cross.columns
+              for col in df_cross_3.columns
               if col != "族群" and col != "排序"
           ],
-          key="editor_cross",
+          key="editor_cross3",
       )
 
-      if st.button("💾 儲存並寫入永久檔案 (交叉比對)", type="primary"):
-        for _, row in edited_df_cross.iterrows():
+      if st.button("💾 儲存並寫入永久檔案 (三雄爭霸)", type="primary"):
+        for _, row in edited_df_cross3.iterrows():
           c = row["代號"]
           ind = row["族群"]
           if pd.notna(ind) and str(ind).strip() != "":
@@ -640,7 +658,7 @@ if market_dict:
             if c in st.session_state.user_industry_map:
               del st.session_state.user_industry_map[c]
         save_db(st.session_state.user_industry_map)
-        st.success("🎉 族群資料已成功寫入硬碟檔案！")
+        st.success("🎉 三雄爭霸族群資料已成功寫入硬碟檔案！")
         st.rerun()
 
     with tab_top100_f:
@@ -669,19 +687,47 @@ if market_dict:
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
         st.rerun()
 
-    with tab_top100_v:
-      edited_df_top100 = st.data_editor(
-          df_top100,
+    with tab_top100_t:
+      edited_df_top100_t = st.data_editor(
+          df_top100_trust,
           use_container_width=True,
           hide_index=True,
           height=500,
           disabled=[
-              col for col in df_top100.columns if col != "族群" and col != "排名"
+              col
+              for col in df_top100_trust.columns
+              if col != "族群" and col != "排名"
           ],
-          key="editor_top100",
+          key="editor_top100_t",
+      )
+      if st.button("💾 儲存並寫入永久檔案 (投信 Top 100)", type="secondary"):
+        for _, row in edited_df_top100_t.iterrows():
+          c = row["代號"]
+          ind = row["族群"]
+          if pd.notna(ind) and str(ind).strip() != "":
+            st.session_state.user_industry_map[c] = str(ind).strip()
+          else:
+            if c in st.session_state.user_industry_map:
+              del st.session_state.user_industry_map[c]
+        save_db(st.session_state.user_industry_map)
+        st.success("🎉 族群資料已成功寫入硬碟檔案！")
+        st.rerun()
+
+    with tab_top100_v:
+      edited_df_top100_val = st.data_editor(
+          df_top100_val,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col
+              for col in df_top100_val.columns
+              if col != "族群" and col != "排名"
+          ],
+          key="editor_top100_val",
       )
       if st.button("💾 儲存並寫入永久檔案 (市值 Top 100)", type="secondary"):
-        for _, row in edited_df_top100.iterrows():
+        for _, row in edited_df_top100_val.iterrows():
           c = row["代號"]
           ind = row["族群"]
           if pd.notna(ind) and str(ind).strip() != "":

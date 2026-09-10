@@ -182,8 +182,6 @@ def fetch_twse_data():
                         str(row[2]).replace(",", "")
                     )
 
-                    # MI_INDEX 成交金額通常在 index 4 或 5 附近 (依證交所回傳格式為主)
-                    # 證交所欄位: 0:代號, 1:名稱, 2:成交股數, 3:成交筆數, 4:成交金額
                     turnover_val = 0.0
                     try:
                       turnover_val = float(str(row[4]).replace(",", ""))
@@ -346,7 +344,7 @@ if market_dict:
     t_shares = latest_trust_shares.get(code, 0)
     close_p = info["收盤價"]
     shares = info["發行總股數"]
-    turnover_100m = info.get("成交金額", 0.0) / 100000000  # 轉換為億元
+    turnover_100m = info.get("成交金額", 0.0) / 100000000
 
     assigned_ind = st.session_state.user_industry_map.get(code, "")
 
@@ -463,7 +461,7 @@ if market_dict:
     )
     df_top100_trust.insert(0, "排名", range(1, len(df_top100_trust) + 1))
 
-    # 3. 成交值 Top 100 (改抓今日成交金額排行)
+    # 3. 成交值 Top 100
     df_v_100 = df_market.sort_values(by="成交值(億)", ascending=False).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
@@ -473,7 +471,6 @@ if market_dict:
     top_trust_codes = set(df_top100_trust["代號"])
     top100_codes = set(df_top100["代號"])
 
-    # 取三者交集 (同時名列外資Top100、投信Top100、成交值Top100)
     cross_codes = top_foreign_codes.intersection(top_trust_codes).intersection(
         top100_codes
     )
@@ -603,7 +600,7 @@ if market_dict:
       if not df_industry_summary.empty:
         df_industry_summary.insert(0, "查看", False)
         st.info(
-            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開該族群籌碼最集中的前三名強勢股！"
+            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開該族群在「三雄爭霸」交集內入選的強勢股！"
         )
 
         edited_industry_summary = st.data_editor(
@@ -623,24 +620,27 @@ if market_dict:
 
         if not selected_rows.empty:
           st.markdown("---")
-          st.markdown("### 🏆 已勾選族群內籌碼最集中前三名強勢股")
+          st.markdown("### 🏆 已勾選族群內入選三雄爭霸的強勢股")
 
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
-            df_ind_stocks = df_all_enriched[
-                df_all_enriched["族群"] == target_ind
-            ].copy()
+            # 修正：直接抓出該族群在交集內的所有股票，不強行限制 .head(3)
+            df_ind_stocks = df_cross[df_cross["族群"] == target_ind].copy()
 
             if not df_ind_stocks.empty:
-              df_top3 = df_ind_stocks.sort_values(
+              df_ind_stocks = df_ind_stocks.sort_values(
                   by="雙法人總集中度(%)", ascending=False
-              ).head(3)
-              df_top3.insert(0, "族群排名", range(1, len(df_top3) + 1))
+              )
+              df_ind_stocks.insert(
+                  0, "族群排名", range(1, len(df_ind_stocks) + 1)
+              )
 
-              st.subheader(f"📌 {target_ind}")
-              st.dataframe(df_top3, use_container_width=True, hide_index=True)
+              st.subheader(f"📌 {target_ind} (共 {len(df_ind_stocks)} 檔)")
+              st.dataframe(
+                  df_ind_stocks, use_container_width=True, hide_index=True
+              )
             else:
-              st.warning(f"「{target_ind}」族群底下暫無股票資料。")
+              st.warning(f"「{target_ind}」族群底下暫無三雄交集股票資料。")
       else:
         st.warning("No data.")
 

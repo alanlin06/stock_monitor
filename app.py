@@ -1,3 +1,4 @@
+
 from datetime import datetime, timedelta
 import json
 import os
@@ -53,22 +54,6 @@ if "user_industry_map" not in st.session_state:
 st.sidebar.header("實戰參數與查找")
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
-)
-
-# ==================== 側邊欄：新增基本面雙重過濾防線 ====================
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎯 進階基本面過濾防線")
-
-filter_double_growth = st.sidebar.checkbox(
-    "僅顯示單月營收【年月雙增】(YoY>0 且 MoM>0)",
-    value=False,
-    help="過濾掉單月營收沒有同步成長的個股",
-)
-
-filter_margin_up = st.sidebar.checkbox(
-    "僅顯示營益率【連續三季正成長】",
-    value=False,
-    help="確保本業獲利能力一季比一季強（Q3 > Q2 > Q1 且皆大於 0）",
 )
 
 
@@ -135,33 +120,32 @@ def fetch_twse_data():
           title_str = str(table.get("title", ""))
           if "發行量加權股價指數" in title_str or "指數" in title_str:
             for row in table.get("data", []):
-              if len(row) > 1 and "發行量加權股價指數" in str(row[0]):
+              if len(row) > 8 and str(row[0]).strip() == "發行量加權股價指數":
                 try:
-                  vals = []
-                  for val in row:
-                    v_str = (
-                        str(val)
-                        .replace(",", "")
-                        .replace("+", "")
-                        .replace("X", "")
-                        .strip()
-                    )
-                    try:
-                      vals.append(float(v_str))
-                    except:
-                      pass
-                  for num in vals:
-                    if num > 3000:
-                      taiex_close = num
-                      break
-                  for num in vals:
-                    if abs(num) < 2000 and num != taiex_close and num != 0.0:
-                      if -20 < num < 20:
-                        taiex_pct = num
-                      else:
-                        taiex_change = num
-                except:
-                  pass
+                  close_str = str(row[1]).replace(",", "").strip()
+                  taiex_close = float(close_str)
+
+                  sign_str = str(row[2]).strip()
+                  change_str = (
+                      str(row[3]).replace(",", "").replace("+", "").strip()
+                  )
+                  taiex_change = float(change_str)
+                  if "-" in sign_str or "跌" in sign_str:
+                    taiex_change = -abs(taiex_change)
+
+                  pct_str = (
+                      str(row[4])
+                      .replace(",", "")
+                      .replace("%", "")
+                      .replace("+", "")
+                      .strip()
+                  )
+                  taiex_pct = float(pct_str)
+                  if "-" in sign_str or "跌" in sign_str:
+                    taiex_pct = -abs(taiex_pct)
+                  break
+                except Exception as e:
+                  print(f"解析加權指數失敗: {e}")
 
           if "data" in table:
             for row in table["data"]:
@@ -193,19 +177,12 @@ def fetch_twse_data():
                     prev_p = close_price - change_val
                     pct_val = (change_val / prev_p) * 100 if prev_p > 0 else 0.0
 
-                    # 💡 註：此處營收與營益率欄位已預留串接接口
-                    # 正式環境可將真實財報 API 數據帶入這裡
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
-                        "營收YoY": 5.0,  # 預設範例值 (實戰請替換為真實 API)
-                        "營收MoM": 2.0,  # 預設範例值
-                        "營益率_Q1": 2.0,  # 預設範例值
-                        "營益率_Q2": 2.5,  # 預設範例值
-                        "營益率_Q3": 3.0,  # 預設範例值
                     }
                   except:
                     continue
@@ -352,11 +329,6 @@ if market_dict:
             "族群": assigned_ind,
             "漲跌": info.get("漲跌", 0.0),
             "漲跌幅(%)": round(info.get("漲跌幅(%)", 0.0), 2),
-            "營收YoY": info.get("營收YoY", 0.0),
-            "營收MoM": info.get("營收MoM", 0.0),
-            "營益率_Q1": info.get("營益率_Q1", 0.0),
-            "營益率_Q2": info.get("營益率_Q2", 0.0),
-            "營益率_Q3": info.get("營益率_Q3", 0.0),
         }
     )
 
@@ -428,31 +400,11 @@ if market_dict:
       df = df[cols]
       return df
 
-    # ==================== 套用側邊欄基本面過濾邏輯 ====================
-    def apply_fundamental_filters(df):
-      filtered_df = df.copy()
-      if filter_double_growth:
-        filtered_df = filtered_df[
-            (filtered_df["營收YoY"] > 0) & (filtered_df["營收MoM"] > 0)
-        ]
-      if filter_margin_up:
-        filtered_df = filtered_df[
-            (filtered_df["營益率_Q1"] > 0)
-            & (filtered_df["營益率_Q2"] > 0)
-            & (filtered_df["營益率_Q3"] > 0)
-            & (filtered_df["營益率_Q2"] > filtered_df["營益率_Q1"])
-            & (filtered_df["營益率_Q3"] > filtered_df["營益率_Q2"])
-        ]
-      return filtered_df
-
-    # 套用過濾
-    df_filtered_market = apply_fundamental_filters(df_market)
-
-    df_all_enriched = enrich_data(df_filtered_market)
+    df_all_enriched = enrich_data(df_market)
 
     # 1. 外資買賣超 Top 100
     df_f_buy = (
-        df_filtered_market[df_filtered_market["外資買賣超股數"] > 0]
+        df_market[df_market["外資買賣超股數"] > 0]
         .sort_values(by="外資買賣超張數", ascending=False)
         .head(100)
     )
@@ -465,9 +417,7 @@ if market_dict:
     )
 
     # 2. 市值 Top 100
-    df_v_100 = df_filtered_market.sort_values(
-        by="市值(億)", ascending=False
-    ).head(100)
+    df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
@@ -476,9 +426,7 @@ if market_dict:
     top100_codes = set(df_top100["代號"])
     cross_codes = top_foreign_codes.intersection(top100_codes)
 
-    df_cross = df_filtered_market[
-        df_filtered_market["代號"].isin(cross_codes)
-    ].copy()
+    df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
@@ -637,11 +585,9 @@ if market_dict:
               st.subheader(f"📌 {target_ind}")
               st.dataframe(df_top3, use_container_width=True, hide_index=True)
             else:
-              st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
+              st.warning(f"「{target_ind}」族群底下暫無股票資料。")
       else:
-        st.warning(
-            "目前無符合條件的族群資料（可能已被進階基本面過濾條件攔截）。"
-        )
+        st.warning("目前無符合條件的族群資料。")
 
     with tab_cross:
       edited_df_cross = st.data_editor(

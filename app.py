@@ -9,7 +9,7 @@ import streamlit as st
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼集中度 (外本比 + 投本比)",
+    page_title="台股籌碼集中度",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -115,7 +115,6 @@ def fetch_twse_data():
     if res_mi.status_code == 200:
       data = res_mi.json()
       if data.get("stat") == "OK":
-        # 1. 萬用搜尋：掃描所有表格尋找加權指數行
         for table in data.get("tables", []):
           for row in table.get("data", []):
             row_str = "".join([str(cell) for cell in row])
@@ -171,7 +170,6 @@ def fetch_twse_data():
           if taiex_close > 0:
             break
 
-        # 2. 爬取個股收盤價與漲跌
         for table in data.get("tables", []):
           if "data" in table:
             for row in table["data"]:
@@ -183,6 +181,18 @@ def fetch_twse_data():
                     issued_shares_total_raw = float(
                         str(row[2]).replace(",", "")
                     )
+
+                    # MI_INDEX 成交金額通常在 index 4 或 5 附近 (依證交所回傳格式為主)
+                    # 證交所欄位: 0:代號, 1:名稱, 2:成交股數, 3:成交筆數, 4:成交金額
+                    turnover_val = 0.0
+                    try:
+                      turnover_val = float(str(row[4]).replace(",", ""))
+                    except:
+                      try:
+                        turnover_val = float(str(row[5]).replace(",", ""))
+                      except:
+                        pass
+
                     close_price_raw = str(row[8]).replace(",", "").strip()
                     if close_price_raw in ["--", "-", ""]:
                       continue
@@ -209,6 +219,7 @@ def fetch_twse_data():
                         "收盤價": close_price,
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
+                        "成交金額": turnover_val,
                     }
                   except:
                     continue
@@ -335,7 +346,7 @@ if market_dict:
     t_shares = latest_trust_shares.get(code, 0)
     close_p = info["收盤價"]
     shares = info["發行總股數"]
-    market_cap_100m = (close_p * shares) / 100000000
+    turnover_100m = info.get("成交金額", 0.0) / 100000000  # 轉換為億元
 
     assigned_ind = st.session_state.user_industry_map.get(code, "")
 
@@ -345,7 +356,7 @@ if market_dict:
             "官方名稱": info["官方名稱"],
             "發行總股數": shares,
             "收盤價": close_p,
-            "市值(億)": round(market_cap_100m, 2),
+            "成交值(億)": round(turnover_100m, 2),
             "外資買賣超股數": f_shares,
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
@@ -440,22 +451,39 @@ if market_dict:
         0, "排名", range(1, len(df_top100_foreign) + 1)
     )
 
-    # 2. 市值 Top 100
-    df_v_100 = df_market.sort_values(by="市值(億)", ascending=False).head(100)
+    # 2. 投信買賣超 Top 100
+    df_t_buy = (
+        df_market[df_market["投信買賣超股數"] > 0]
+        .sort_values(by="投信買賣超張數", ascending=False)
+        .head(100)
+    )
+    df_top100_trust = enrich_data(df_t_buy)
+    df_top100_trust = df_top100_trust.sort_values(
+        by="雙法人總集中度(%)", ascending=False
+    )
+    df_top100_trust.insert(0, "排名", range(1, len(df_top100_trust) + 1))
+
+    # 3. 成交值 Top 100 (改抓今日成交金額排行)
+    df_v_100 = df_market.sort_values(by="成交值(億)", ascending=False).head(100)
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # 3. 雙榜交叉比對
+    # ==================== 三雄爭霸：三方交叉比對 ====================
     top_foreign_codes = set(df_top100_foreign["代號"])
+    top_trust_codes = set(df_top100_trust["代號"])
     top100_codes = set(df_top100["代號"])
-    cross_codes = top_foreign_codes.intersection(top100_codes)
+
+    # 取三者交集 (同時名列外資Top100、投信Top100、成交值Top100)
+    cross_codes = top_foreign_codes.intersection(top_trust_codes).intersection(
+        top100_codes
+    )
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
     df_cross = enrich_data(df_cross)
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 族群平均集中度統計 ====================
+    # ==================== 族群平均集中度統計 (使用三雄交集資料) ====================
     df_grouped_raw = df_cross[df_cross["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
@@ -467,7 +495,7 @@ if market_dict:
               平均投本比_pct=("投本比(%)", "mean"),
               平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
               外資總買超張數=("外資買賣超張數", "sum"),
-              族群總市值=("市值(億)", "sum"),
+              族群總成交值=("成交值(億)", "sum"),
           )
           .reset_index()
       )
@@ -512,7 +540,7 @@ if market_dict:
           "平均投本比(%)",
           "平均雙法人總集中度(%)",
           "外資總買超張數",
-          "族群總市值",
+          "族群總成交值",
       ]
       df_industry_summary = df_industry_summary[
           [c for c in cols_order if c in df_industry_summary.columns]
@@ -531,7 +559,7 @@ if market_dict:
               "平均投本比(%)",
               "平均雙法人總集中度(%)",
               "外資總買超張數",
-              "族群總市值",
+              "族群總成交值",
           ]
       )
 
@@ -559,13 +587,16 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜 ====================
-    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_v = st.tabs(
-        [
-            "📈 群雄並起",
-            "🎯 三雄爭霸",
-            "🔥 外資買賣超 Top 100",
-            "💰 市值 Top 100",
-        ]
+    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_t, tab_top100_v = (
+        st.tabs(
+            [
+                "群雄並起",
+                "三雄爭霸",
+                "外資買賣超 Top 100",
+                "投信買賣超 Top 100",
+                "成交值 Top 100",
+            ]
+        )
     )
 
     with tab_ind_summary:
@@ -614,6 +645,10 @@ if market_dict:
         st.warning("No data.")
 
     with tab_cross:
+      st.info(
+          "🎯 **三雄爭霸**：同時符合 [外資買賣超 Top 100]、[投信買賣超 Top"
+          " 100] 與 [成交值 Top 100] 的交集股票。"
+      )
       edited_df_cross = st.data_editor(
           df_cross,
           use_container_width=True,
@@ -627,7 +662,7 @@ if market_dict:
           key="editor_cross",
       )
 
-      if st.button("💾 儲存並寫入永久檔案 (交叉比對)", type="primary"):
+      if st.button("💾 儲存並寫入永久檔案 (三雄爭霸)", type="primary"):
         for _, row in edited_df_cross.iterrows():
           c = row["代號"]
           ind = row["族群"]
@@ -666,6 +701,32 @@ if market_dict:
         st.success("🎉 族群資料已成功寫入硬碟檔案！")
         st.rerun()
 
+    with tab_top100_t:
+      edited_df_top100_t = st.data_editor(
+          df_top100_trust,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col
+              for col in df_top100_trust.columns
+              if col != "族群" and col != "排名"
+          ],
+          key="editor_top100_t",
+      )
+      if st.button("💾 儲存並寫入永久檔案 (投信 Top 100)", type="secondary"):
+        for _, row in edited_df_top100_t.iterrows():
+          c = row["代號"]
+          ind = row["族群"]
+          if pd.notna(ind) and str(ind).strip() != "":
+            st.session_state.user_industry_map[c] = str(ind).strip()
+          else:
+            if c in st.session_state.user_industry_map:
+              del st.session_state.user_industry_map[c]
+        save_db(st.session_state.user_industry_map)
+        st.success("🎉 族群資料已成功寫入硬碟檔案！")
+        st.rerun()
+
     with tab_top100_v:
       edited_df_top100 = st.data_editor(
           df_top100,
@@ -677,7 +738,7 @@ if market_dict:
           ],
           key="editor_top100",
       )
-      if st.button("💾 儲存並寫入永久檔案 (市值 Top 100)", type="secondary"):
+      if st.button("💾 儲存並寫入永久檔案 (成交值 Top 100)", type="secondary"):
         for _, row in edited_df_top100.iterrows():
           c = row["代號"]
           ind = row["族群"]

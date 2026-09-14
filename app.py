@@ -55,7 +55,7 @@ search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
 
-# 💡 新增：基本面過濾開關
+# 💡 基本面防護網開關
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🛡️ 基本面防護網")
 enable_profit_filter = st.sidebar.checkbox(
@@ -65,10 +65,6 @@ enable_profit_filter = st.sidebar.checkbox(
 
 # ==================== 模擬或串接真實財報營益率函式 ====================
 def fetch_financial_data(code):
-  """這裡可以替換成您實際串接財報 API (如 FinMind 或 yfinance) 的邏輯。
-
-  目前以個股代號作為亂數種子產生示範，實戰中請換成真實抓取的最新季報數據。
-  """
   np.random.seed(int(code) if code.isdigit() else 42)
   op_latest = round(np.random.uniform(-2.0, 28.0), 2)  # 模擬本季營益率
   op_prev = round(op_latest + np.random.uniform(-4.0, 3.0), 2)  # 模擬上一季營益率
@@ -230,7 +226,6 @@ def fetch_twse_data():
                     prev_p = close_price - change_val
                     pct_val = (change_val / prev_p) * 100 if prev_p > 0 else 0.0
 
-                    # 取得營益率數據
                     op_latest, op_prev = fetch_financial_data(code)
 
                     market_dict[code] = {
@@ -372,11 +367,7 @@ if market_dict:
     op_latest = info["本季營益率(%)"]
     op_prev = info["上一季營益率(%)"]
 
-    # 🛡️ 核心篩選條件：如果啟用過濾，必須「本季營益率 > 0」且「大於上一季」
-    if enable_profit_filter:
-      if not (op_latest > 0 and op_latest > op_prev):
-        continue
-
+    # 💡 移除原本全市場直接過濾的邏輯，保留完整基礎池以維持精準族群架構
     assigned_ind = st.session_state.user_industry_map.get(code, "")
 
     base_rows.append(
@@ -509,11 +500,19 @@ if market_dict:
     )
 
     df_cross = df_market[df_market["代號"].isin(cross_codes)].copy()
+
+    # 💡 關鍵修改：先取得「三雄爭霸」的核心籌碼交集後，才在這裡針對交集內部套用營益率過濾與篩選！
+    if enable_profit_filter:
+      df_cross = df_cross[
+          (df_cross["本季營益率(%)"] > 0)
+          & (df_cross["本季營益率(%)"] > df_cross["上一季營益率(%)"])
+      ]
+
     df_cross = enrich_data(df_cross)
     df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 族群平均集中度統計 (使用三雄交集資料) ====================
+    # ==================== 族群平均集中度統計 (基於精準的三雄交集與內部過濾) ====================
     df_grouped_raw = df_cross[df_cross["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
@@ -667,7 +666,9 @@ if market_dict:
 
         if not selected_rows.empty:
           st.markdown("---")
-          st.markdown("### 🏆 已勾選族群內入選三雄爭霸的強勢股")
+          st.markdown(
+              "### 🏆 已勾選族群內入選三雄爭霸（含基本面防護網）的強勢股"
+          )
 
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
@@ -686,16 +687,16 @@ if market_dict:
                   df_ind_stocks, use_container_width=True, hide_index=True
               )
             else:
-              st.warning(f"「{target_ind}」族群底下暫無三雄交集股票資料。")
+              st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
       else:
         st.warning(
-            "⚠️ 目前沒有符合籌碼與【營益率大於 0 且大於上一季】條件的資料。"
+            "⚠️ 目前沒有符合籌碼交集與【營益率大於 0 且大於上一季】條件的資料。"
         )
 
     with tab_cross:
       st.info(
           "🎯 **三雄爭霸**：同時符合 [外資 Top 100]、[投信 Top 100]、[成交值 Top"
-          " 100] 且【本業營益率正成長】的交集股票。"
+          " 100] 且經過內部營益率基本面防護網篩選的精準交集股票。"
       )
       edited_df_cross = st.data_editor(
           df_cross,

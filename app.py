@@ -684,8 +684,9 @@ if market_dict:
             ].copy()
 
             if not df_ind_stocks.empty:
+              # 🔧 改為依雙法人總集中度(%)由高到低排序
               df_ind_stocks = df_ind_stocks.sort_values(
-                  by="成交值(億)", ascending=False
+                  by="雙法人總集中度(%)", ascending=False
               )
               if "族群排名" in df_ind_stocks.columns:
                 df_ind_stocks = df_ind_stocks.drop(columns=["族群排名"])

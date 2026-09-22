@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度 (含營益率基本面過濾)")
+st.title("台股籌碼集中度")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
@@ -489,7 +489,7 @@ if market_dict:
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # ==================== 三方交集 + 漲跌幅 > 0 核心：「群雄並起」====================
+    # ==================== 三方交集 + 漲跌幅 > 0 核心：「族群擴散」====================
     df_f_up_pool = df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0]
     df_t_up_pool = df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0]
     df_v_up_pool = df_top100[df_top100["漲跌幅(%)"] > 0]
@@ -635,8 +635,8 @@ if market_dict:
     tab_ind_summary, tab_cross, tab_top100_f, tab_top100_t, tab_top100_v = (
         st.tabs(
             [
-                "群雄並起",
-                "交集篩選明細",
+                "族群擴散",
+                "市場共識",
                 "外資買賣超 Top 100",
                 "投信買賣超 Top 100",
                 "成交值 Top 100",
@@ -697,7 +697,7 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "🎯 **交集篩選明細**：【外資 Top 100 且上漲】∩【投信 Top 100 且上漲】∩【成交值 Top 100 且上漲】＋營益率基本面防護網。"
+          "🎯 **市場共識**：【外資 Top 100 且上漲】∩【投信 Top 100 且上漲】∩【成交值 Top 100 且上漲】＋營益率基本面防護網。"
       )
       edited_df_cross = st.data_editor(
           df_cross,
@@ -712,7 +712,7 @@ if market_dict:
           key="editor_cross",
       )
 
-      if st.button("💾 儲存並寫入永久檔案 (交集篩選明細)", type="primary"):
+      if st.button("💾 儲存並寫入永久檔案 (市場共識)", type="primary"):
         for _, row in edited_df_cross.iterrows():
           c = row["代號"]
           ind = row["族群"]

@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股成交值百大新面孔與常客族群雷達",
+    page_title="台股強勢雷達",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股成交值百大：漲勢新面孔與常客族群雷達（含籌碼集中度排序）")
+st.title("🎯 台股強勢")
 
 DB_FILE = "industry_db.json"
 
@@ -52,13 +52,12 @@ search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
 
-# 新增排序依據選擇側邊欄設定
+# 排序依據選擇側邊欄設定（移除升冪排序）
 sort_metric = st.sidebar.selectbox(
     "📊 明細/族群表格排序依據",
     ["外本比(%)", "投本比(%)", "雙法人合佔比(%)", "漲跌幅(%)", "成交值(億)"],
     index=2,
 )
-sort_ascending = st.sidebar.checkbox("🔼 升冪排序（預設降冪）", value=False)
 
 
 @st.cache_data(ttl=600)
@@ -285,7 +284,7 @@ def build_group_stats_with_inst(codes_list):
     return pd.DataFrame(), pd.DataFrame()
 
   if sort_metric in df.columns:
-    df = df.sort_values(by=sort_metric, ascending=sort_ascending).reset_index(
+    df = df.sort_values(by=sort_metric, ascending=False).reset_index(
         drop=True
     )
 
@@ -310,7 +309,6 @@ def build_group_stats_with_inst(codes_list):
       group_summary["平均雙法人合佔比"], 3
   )
 
-  # 對應族群排序對照欄位
   metric_map = {
       "外本比(%)": "平均外本比",
       "投本比(%)": "平均投本比",
@@ -320,7 +318,7 @@ def build_group_stats_with_inst(codes_list):
   }
   target_grp_col = metric_map.get(sort_metric, "平均雙法人合佔比")
   group_summary = group_summary.sort_values(
-      by=target_grp_col, ascending=sort_ascending
+      by=target_grp_col, ascending=False
   ).reset_index(drop=True)
 
   return df, group_summary
@@ -351,7 +349,7 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
   st.subheader(
       f"🔥 成交值百大「今日突然擠進來且上漲」的新面孔（依 {sort_metric}"
-      f" {'升冪' if sort_ascending else '降冪'}排序）"
+      " 降冪排序）"
   )
   if not grp_new_up.empty:
     c1, c2 = st.columns([1, 1.3])
@@ -379,7 +377,7 @@ with tab1:
 with tab2:
   st.subheader(
       f"🔁 成交值百大「重複常客且今天上漲」之分佈（依 {sort_metric}"
-      f" {'升冪' if sort_ascending else '降冪'}排序）"
+      " 降冪排序）"
   )
   if not grp_rec_up.empty:
     c1, c2 = st.columns([1, 1.3])

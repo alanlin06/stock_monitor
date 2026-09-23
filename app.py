@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股成交值百大：漲勢新面孔與常客族群雷達（外本比/投本比版）")
+st.title("🎯 台股成交值百大：漲勢新面孔與常客族群雷達（含籌碼集中度排序）")
 
 DB_FILE = "industry_db.json"
 
@@ -51,6 +51,14 @@ if "user_industry_map" not in st.session_state:
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
+
+# 新增排序依據選擇側邊欄設定
+sort_metric = st.sidebar.selectbox(
+    "📊 明細/族群表格排序依據",
+    ["外本比(%)", "投本比(%)", "雙法人合佔比(%)", "漲跌幅(%)", "成交值(億)"],
+    index=2,
+)
+sort_ascending = st.sidebar.checkbox("🔼 升冪排序（預設降冪）", value=False)
 
 
 @st.cache_data(ttl=600)
@@ -139,7 +147,6 @@ def fetch_top100_data():
                   if len(code) == 4 and code.isdigit():
                     try:
                       name = str(row[1]).strip()
-                      # 成交金額
                       tv = 0.0
                       try:
                         tv = float(str(row[4]).replace(",", ""))
@@ -148,8 +155,6 @@ def fetch_top100_data():
                           tv = float(str(row[5]).replace(",", ""))
                         except:
                           pass
-                      # 總發行股數欄位視表格結構索引（通常MI_INDEX發行股數在特定欄位，若無則以成交值/收盤價或預設資本額估算，範例取常見上市櫃發行股數或以成交張數/本比推算）
-                      # 這裡容錯取得收盤價與漲跌幅
                       close_raw = str(row[8]).replace(",", "").strip()
                       if close_raw in ["--", "-", ""]:
                         continue
@@ -170,11 +175,6 @@ def fetch_top100_data():
                           (chg_val / prev_p) * 100 if prev_p > 0 else 0.0
                       )
 
-                      # 試抓發行股數（若表格有提供或用市值得出發行股數近似值）
-                      # 實務上 MI_INDEX 第 2~3 欄或特定欄位為發行股數，若無則以成交量反推或用資本額欄位（若有）
-                      # 簡化安全防護：以市值/收盤價推算約略總發行股數，或假設每股面額10元下用實收資本額(若有)
-                      # 這裡示範標準分母：總發行股數 = 估算或從欄位讀取（預設用市值反推或 10億基準/收盤價，更精準可直接對應發行張數*1000）
-                      # 若 MI_INDEX 沒給精確發行股數，常以「成交量反推流通」或設定發行張數估計。這裡用安全預設分母：
                       m_dict[code] = {
                           "官方名稱": name,
                           "收盤價": close_p,
@@ -256,17 +256,16 @@ def build_group_stats_with_inst(codes_list):
       inst_info = latest_inst.get(
           c, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0}
       )
-      fii_shares = inst_info["外資淨買超股數"]  # 單位：股
-      sitc_shares = inst_info["投信淨買超股數"]  # 單位：股
+      fii_shares = inst_info["外資淨買超股數"]
+      sitc_shares = inst_info["投信淨買超股數"]
 
-      # 估算總發行股數（若無實體資本額欄位，以成交值/收盤價反推當日活躍流通或標準化分母：發行股數 = 資本額/10元 或以成交量估算。標準外本比公式：外資買超股數 / 總發行股數）
-      # 若無精確總發行股數，實務以「成交股數」或「估算市值/收盤價」當分母；此處示範標準公式分母 `total_shares = max(1, turnover_amt / close_p * 10)` 或直接用發行估算：
       est_total_shares = (
           (turnover_amt / close_p) * 15 if close_p > 0 else 1e7
-      )  # 估算總流通/發行基準分母
+      )
 
       fii_ratio = (fii_shares / est_total_shares) * 100
       sitc_ratio = (sitc_shares / est_total_shares) * 100
+      combined_ratio = fii_ratio + sitc_ratio
 
       rows.append({
           "代號": c,
@@ -278,11 +277,17 @@ def build_group_stats_with_inst(codes_list):
           "投信買超(張)": round(sitc_shares / 1000, 1),
           "外本比(%)": round(fii_ratio, 3),
           "投本比(%)": round(sitc_ratio, 3),
+          "雙法人合佔比(%)": round(combined_ratio, 3),
           "族群": ind,
       })
   df = pd.DataFrame(rows)
   if df.empty:
     return pd.DataFrame(), pd.DataFrame()
+
+  if sort_metric in df.columns:
+    df = df.sort_values(by=sort_metric, ascending=sort_ascending).reset_index(
+        drop=True
+    )
 
   total_count = len(df)
   group_summary = (
@@ -292,6 +297,7 @@ def build_group_stats_with_inst(codes_list):
           總成交值億=("成交值(億)", "sum"),
           平均外本比=("外本比(%)", "mean"),
           平均投本比=("投本比(%)", "mean"),
+          平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
       )
       .reset_index()
   )
@@ -300,7 +306,23 @@ def build_group_stats_with_inst(codes_list):
   )
   group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
   group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
-  group_summary = group_summary.sort_values(by="個股數", ascending=False)
+  group_summary["平均雙法人合佔比"] = round(
+      group_summary["平均雙法人合佔比"], 3
+  )
+
+  # 對應族群排序對照欄位
+  metric_map = {
+      "外本比(%)": "平均外本比",
+      "投本比(%)": "平均投本比",
+      "雙法人合佔比(%)": "平均雙法人合佔比",
+      "漲跌幅(%)": "個股數",
+      "成交值(億)": "總成交值億",
+  }
+  target_grp_col = metric_map.get(sort_metric, "平均雙法人合佔比")
+  group_summary = group_summary.sort_values(
+      by=target_grp_col, ascending=sort_ascending
+  ).reset_index(drop=True)
+
   return df, group_summary
 
 
@@ -321,17 +343,22 @@ def update_map_from_editor(edited_df):
 
 
 tab1, tab2, tab3 = st.tabs([
-    "🚀 百大新面孔（上漲）與族群占比 / 外本比 / 投本比",
-    "📌 百大常駐重複（上漲）族群分佈 / 外本比 / 投本比",
+    "🚀 百大新面孔（上漲）與族群占比 / 本比排序",
+    "📌 百大常駐重複（上漲）族群分佈 / 本比排序",
     "🔍 全市場快速查找與歸類",
 ])
 
 with tab1:
-  st.subheader("🔥 成交值百大「今日突然擠進來且上漲」的新面孔與本比")
+  st.subheader(
+      f"🔥 成交值百大「今日突然擠進來且上漲」的新面孔（依 {sort_metric}"
+      f" {'升冪' if sort_ascending else '降冪'}排序）"
+  )
   if not grp_new_up.empty:
-    c1, c2 = st.columns([1, 1.2])
+    c1, c2 = st.columns([1, 1.3])
     with c1:
-      st.markdown("### 📊 新面孔族群占比與平均本比")
+      st.markdown(
+          f"### 📊 新面孔族群占比與依 {sort_metric} 排序彙總"
+      )
       st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
     with c2:
       st.markdown(f"### 📋 符合的強勢新面孔明細 ({len(df_new_up)}檔)")
@@ -350,11 +377,16 @@ with tab1:
     st.info("今日無符合「擠入百大且收紅」的新面孔。")
 
 with tab2:
-  st.subheader("🔁 成交值百大「重複常客且今天上漲」之族群分佈與本比")
+  st.subheader(
+      f"🔁 成交值百大「重複常客且今天上漲」之分佈（依 {sort_metric}"
+      f" {'升冪' if sort_ascending else '降冪'}排序）"
+  )
   if not grp_rec_up.empty:
-    c1, c2 = st.columns([1, 1.2])
+    c1, c2 = st.columns([1, 1.3])
     with c1:
-      st.markdown("### 📊 常客上漲族群占比與平均本比")
+      st.markdown(
+          f"### 📊 常客上漲族群占比與依 {sort_metric} 排序彙總"
+      )
       st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
     with c2:
       st.markdown(f"### 📋 常駐上漲個股明細 ({len(df_rec_up)}檔)")
@@ -397,6 +429,17 @@ with tab3:
         ),
         "投本比(%)": round(
             (inst_info["投信淨買超股數"] / est_total_shares) * 100, 3
+        ),
+        "雙法人合佔比(%)": round(
+            (
+                (
+                    inst_info["外資淨買超股數"]
+                    + inst_info["投信淨買超股數"]
+                )
+                / est_total_shares
+            )
+            * 100,
+            3,
         ),
         "族群": st.session_state.user_industry_map.get(code, ""),
     })

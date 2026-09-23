@@ -346,10 +346,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-  st.subheader(
-      f"🔥 成交值百大「今日突然擠進來且上漲」的新面孔（依 {sort_metric}"
-      " 降冪排序）"
-  )
+  st.subheader("🚀 新進榜強勢股")
   if not grp_new_up.empty:
     c1, c2 = st.columns([1, 1.3])
     with c1:
@@ -369,13 +366,10 @@ with tab1:
       if st.button("💾 儲存新面孔族群修改", key="btn_save_new"):
         update_map_from_editor(ed_new)
   else:
-    st.info("今日無符合「擠入百大且收紅」的新面孔。")
+    st.info("今日無符合條件的新進榜標的。")
 
 with tab2:
-  st.subheader(
-      f"🔁 成交值百大「重複常客且今天上漲」之分佈（依 {sort_metric}"
-      " 降冪排序）"
-  )
+  st.subheader("📌 持續中強勢股")
   if not grp_rec_up.empty:
     c1, c2 = st.columns([1, 1.3])
     with c1:
@@ -395,7 +389,7 @@ with tab2:
       if st.button("💾 儲存常客族群修改", key="btn_save_rec"):
         update_map_from_editor(ed_rec)
   else:
-    st.info("目前無符合條件的常客上漲標的。")
+    st.info("目前無符合條件的持續中標的。")
 
 with tab3:
   st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")

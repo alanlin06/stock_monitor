@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股強勢雷達 - 蓄勢新兵模型",
+    page_title="台股強勢雷達 - ChatGPT 序列模型",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢雷達（蓄勢放大倍數模型）")
+st.title("🎯 台股強勢雷達（ChatGPT 序列排序模型）")
 
 DB_FILE = "industry_db.json"
 
@@ -56,13 +56,13 @@ sort_metric = st.sidebar.selectbox(
     "📊 明細/族群表格排序依據",
     [
         "成交值放大倍數",
+        "漲跌幅(%)",
         "外本比(%)",
         "投本比(%)",
         "雙法人合佔比(%)",
-        "漲跌幅(%)",
         "成交值(億)",
     ],
-    index=0,
+    index=0,  # 預設直接依放大倍數排序 [cite: 8]
 )
 
 
@@ -258,11 +258,10 @@ def build_group_stats_with_inst(codes_list):
       amt_today = info["成交金額"]
       amt_yesterday = prev_info["成交金額"]
 
-      # 計算成交值放大倍數 (防呆除以 0 或極小值)
-      if amt_yesterday > 0:
-        multiplier = round(amt_today / amt_yesterday, 2)
-      else:
-        multiplier = 0.0
+      # Step ① 算成交值放大倍數 [cite: 8]
+      multiplier = (
+          round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
+      )
 
       ind = st.session_state.user_industry_map.get(c, "未分類")
       close_p = info["收盤價"]
@@ -281,18 +280,19 @@ def build_group_stats_with_inst(codes_list):
       sitc_ratio = (sitc_shares / est_total_shares) * 100
       combined_ratio = fii_ratio + sitc_ratio
 
+      # 依照 ChatGPT 順序排列：放大倍數 -> 漲幅 -> 外本比 -> 投本比 -> 族群 [cite: 8]
       rows.append({
           "代號": c,
           "官方名稱": info["官方名稱"],
-          "收盤價": close_p,
-          "漲跌幅(%)": info["漲跌幅(%)"],
-          "成交值(億)": round(amt_today / 100000000, 2),
           "成交值放大倍數": multiplier,
-          "外資買超(張)": round(fii_shares / 1000, 1),
-          "投信買超(張)": round(sitc_shares / 1000, 1),
+          "漲跌幅(%)": info["漲跌幅(%)"],
           "外本比(%)": round(fii_ratio, 3),
           "投本比(%)": round(sitc_ratio, 3),
           "雙法人合佔比(%)": round(combined_ratio, 3),
+          "收盤價": close_p,
+          "成交值(億)": round(amt_today / 100000000, 2),
+          "外資買超(張)": round(fii_shares / 1000, 1),
+          "投信買超(張)": round(sitc_shares / 1000, 1),
           "族群": ind,
       })
   df = pd.DataFrame(rows)
@@ -311,6 +311,7 @@ def build_group_stats_with_inst(codes_list):
           個股數=("代號", "count"),
           總成交值億=("成交值(億)", "sum"),
           平均放大倍數=("成交值放大倍數", "mean"),
+          平均漲跌幅=("漲跌幅(%)", "mean"),
           平均外本比=("外本比(%)", "mean"),
           平均投本比=("投本比(%)", "mean"),
           平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
@@ -324,6 +325,7 @@ def build_group_stats_with_inst(codes_list):
       group_summary["平均雙法人合佔比"] * np.sqrt(group_summary["個股數"]), 3
   )
   group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
+  group_summary["平均漲跌幅"] = round(group_summary["平均漲跌幅"], 2)
   group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
   group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
   group_summary["平均雙法人合佔比"] = round(
@@ -335,6 +337,7 @@ def build_group_stats_with_inst(codes_list):
       "個股數",
       "總成交值億",
       "平均放大倍數",
+      "平均漲跌幅",
       "籌碼集中分數",
       "占比(%)",
       "平均外本比",
@@ -345,10 +348,10 @@ def build_group_stats_with_inst(codes_list):
 
   metric_map = {
       "成交值放大倍數": "平均放大倍數",
+      "漲跌幅(%)": "平均漲跌幅",
       "外本比(%)": "平均外本比",
       "投本比(%)": "平均投本比",
       "雙法人合佔比(%)": "籌碼集中分數",
-      "漲跌幅(%)": "個股數",
       "成交值(億)": "總成交值億",
   }
   target_grp_col = metric_map.get(sort_metric, "平均放大倍數")
@@ -382,7 +385,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-  st.subheader("🚀 新進榜強勢股（籌碼+蓄勢放大模型）")
+  st.subheader("🚀 新進榜強勢股（放大倍數 ➔ 漲幅 ➔ 外本/投本比）")
   if not grp_new_up.empty:
     c1, c2 = st.columns([1.1, 1.4])
     with c1:
@@ -446,12 +449,8 @@ with tab3:
     all_rows.append({
         "代號": code,
         "官方名稱": info["官方名稱"],
-        "收盤價": info["收盤價"],
-        "漲跌幅(%)": info["漲跌幅(%)"],
-        "成交值(億)": round(amt_today / 100000000, 2),
         "成交值放大倍數": multiplier,
-        "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
-        "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
+        "漲跌幅(%)": info["漲跌幅(%)"],
         "外本比(%)": round(
             (inst_info["外資淨買超股數"] / est_total_shares) * 100, 3
         ),
@@ -469,6 +468,10 @@ with tab3:
             * 100,
             3,
         ),
+        "收盤價": info["收盤價"],
+        "成交值(億)": round(amt_today / 100000000, 2),
+        "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
+        "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
         "族群": st.session_state.user_industry_map.get(code, ""),
     })
   df_all = pd.DataFrame(all_rows)

@@ -35,6 +35,7 @@ def load_db():
       "3231": "AI伺服器",
       "2356": "AI伺服器",
       "6669": "AI伺服器/矽智財",
+      "8105": "硬板",
   }
 
 
@@ -66,8 +67,8 @@ enable_profit_filter = st.sidebar.checkbox(
 # ==================== 模擬或串接真實財報營益率函式 ====================
 def fetch_financial_data(code):
   np.random.seed(int(code) if code.isdigit() else 42)
-  op_latest = round(np.random.uniform(-2.0, 28.0), 2)  # 模擬本季營益率
-  op_prev = round(op_latest + np.random.uniform(-4.0, 3.0), 2)  # 模擬上一季營益率
+  op_latest = round(np.random.uniform(-2.0, 28.0), 2)
+  op_prev = round(op_latest + np.random.uniform(-4.0, 3.0), 2)
   return op_latest, op_prev
 
 
@@ -638,7 +639,7 @@ if market_dict:
         st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
       st.markdown("---")
 
-    # ==================== 分頁顯示排行榜 ====================
+    # ==================== 分頁顯示排行榜與編輯 ====================
     tab_ind_summary, tab_cross, tab_top100_f, tab_top100_t, tab_top100_v = (
         st.tabs(
             [
@@ -650,6 +651,23 @@ if market_dict:
             ]
         )
     )
+
+    def update_map_from_editor(edited_df):
+      if (
+          not edited_df.empty
+          and "代號" in edited_df.columns
+          and "族群" in edited_df.columns
+      ):
+        updated_map = st.session_state.user_industry_map.copy()
+        for _, row in edited_df.iterrows():
+          c_code = str(row["代號"]).strip()
+          c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
+          updated_map[c_code] = c_ind
+        st.session_state.user_industry_map = updated_map
+        save_db(updated_map)
+        st.success(
+            "✅ 族群設定已成功同步並儲存至本地資料庫！(請重整或切換頁面套用)"
+        )
 
     with tab_ind_summary:
       if not df_industry_summary.empty:
@@ -675,7 +693,9 @@ if market_dict:
 
         if not selected_rows.empty:
           st.markdown("---")
-          st.markdown("### 🏆 已勾選族群內入選的強勢股")
+          st.markdown(
+              "### 🏆 已勾選族群內入選的強勢股 (可直接編輯個股族群)"
+          )
 
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
@@ -684,7 +704,6 @@ if market_dict:
             ].copy()
 
             if not df_ind_stocks.empty:
-              # 🔧 改為依雙法人總集中度(%)由高到低排序
               df_ind_stocks = df_ind_stocks.sort_values(
                   by="雙法人總集中度(%)", ascending=False
               )
@@ -695,9 +714,21 @@ if market_dict:
               )
 
               st.subheader(f"📌 {target_ind} (共 {len(df_ind_stocks)} 檔)")
-              st.dataframe(
-                  df_ind_stocks, use_container_width=True, hide_index=True
+              edited_sub = st.data_editor(
+                  df_ind_stocks,
+                  use_container_width=True,
+                  hide_index=True,
+                  disabled=[
+                      c
+                      for c in df_ind_stocks.columns
+                      if c != "族群" and c != "族群排名"
+                  ],
+                  key=f"editor_sub_{target_ind}",
               )
+              if st.button(
+                  f"💾 儲存 {target_ind} 變更", key=f"btn_save_sub_{target_ind}"
+              ):
+                update_map_from_editor(edited_sub)
             else:
               st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
       else:
@@ -707,36 +738,62 @@ if market_dict:
 
     with tab_cross:
       st.info(
-          "🎯 **市場共識**：【外資 Top 100 且上漲】∩【投信 Top 100 且上漲】∩【成交值 Top 100 且上漲】＋營益率基本面防護網。"
+          "🎯 **市場共識**：直接編輯【族群】欄位後點擊下方按鈕儲存。"
       )
       edited_df_cross = st.data_editor(
           df_cross,
           use_container_width=True,
           hide_index=True,
           height=500,
-          disabled=[
-              col
-              for col in df_cross.columns
-              if col != "族群" and col != "排序"
-          ],
-          key="editor_cross",
+          disabled=[col for col in df_cross.columns if col != "族群"],
+          key="editor_cross_all",
       )
-
-      if st.button("💾 儲存市場共識分頁的族群設定", key="btn_save_cross"):
-        updated_map = st.session_state.user_industry_map.copy()
-        for _, row in edited_df_cross.iterrows():
-          c_code = str(row["代號"]).strip()
-          c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
-          updated_map[c_code] = c_ind
-        st.session_state.user_industry_map = updated_map
-        save_db(updated_map)
-        st.success("✅ 市場共識分頁的族群設定已成功儲存至本地資料庫！")
+      if st.button("💾 儲存市場共識分頁的族群設定", key="btn_save_cross_all"):
+        update_map_from_editor(edited_df_cross)
 
     with tab_top100_f:
-      st.dataframe(df_top100_foreign, use_container_width=True, hide_index=True)
+      st.info("💡 **外資買賣超 Top 100**：可直接修改【族群】欄位")
+      edited_tf = st.data_editor(
+          df_top100_foreign,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[
+              col for col in df_top100_foreign.columns if col != "族群"
+          ],
+          key="editor_top100_f_all",
+      )
+      if st.button(
+          "💾 儲存外資 Top 100 分頁的族群設定", key="btn_save_top100_f"
+      ):
+        update_map_from_editor(edited_tf)
 
     with tab_top100_t:
-      st.dataframe(df_top100_trust, use_container_width=True, hide_index=True)
+      st.info("💡 **投信買賣超 Top 100**：可直接修改【族群】欄位")
+      edited_tt = st.data_editor(
+          df_top100_trust,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[col for col in df_top100_trust.columns if col != "族群"],
+          key="editor_top100_t_all",
+      )
+      if st.button(
+          "💾 儲存投信 Top 100 分頁的族群設定", key="btn_save_top100_t"
+      ):
+        update_map_from_editor(edited_tt)
 
     with tab_top100_v:
-      st.dataframe(df_top100, use_container_width=True, hide_index=True)
+      st.info("💡 **成交值 Top 100**：可直接修改【族群】欄位")
+      edited_tv = st.data_editor(
+          df_top100,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[col for col in df_top100.columns if col != "族群"],
+          key="editor_top100_v_all",
+      )
+      if st.button(
+          "💾 儲存成交值 Top 100 分頁的族群設定", key="btn_save_top100_v"
+      ):
+        update_map_from_editor(edited_tv)

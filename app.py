@@ -381,7 +381,7 @@ df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 
 
 # ---------------------------------------------------------
-# 雙法人 Top100 / 交集族群集中度比較
+# 雙法人 Top100 / 交集族群集中度比較（改用 股數 與 入選外本/投本比平均轉化集中度）
 # ---------------------------------------------------------
 def build_top100_institutional_concentration():
   fii_sorted = sorted(
@@ -419,10 +419,9 @@ def build_top100_institutional_concentration():
       rows.append({
           "代號": code,
           "官方名稱": name,
-          "買超張數": round(shrs / 1000, 1),
+          "買超股數": int(shrs),
           "本比(%)": round(ratio, 3),
           "族群": ind,
-          "Raw_shrs": shrs,
       })
     df_temp = pd.DataFrame(rows)
     if df_temp.empty:
@@ -432,14 +431,14 @@ def build_top100_institutional_concentration():
         df_temp.groupby("族群")
         .agg(
             家數=("代號", "count"),
-            總買超張數=("買超張數", "sum"),
+            總買超股數=("買超股數", "sum"),
             平均本比=("本比(%)", "mean"),
         )
         .reset_index()
     )
     grp["平均本比"] = round(grp["平均本比"], 3)
     grp["籌碼集中強度"] = round(grp["平均本比"] * np.sqrt(grp["家數"]), 3)
-    grp = grp.sort_values(by="總買超張數", ascending=False).reset_index(
+    grp = grp.sort_values(by="總買超股數", ascending=False).reset_index(
         drop=True
     )
     return df_temp, grp
@@ -460,28 +459,35 @@ def build_top100_institutional_concentration():
 
       fii_cnt = len(sub_fii)
       sitc_cnt = len(sub_sitc)
-      fii_sum_shrs = sub_fii["買超張數"].sum()
-      sitc_sum_shrs = sub_sitc["買超張數"].sum()
-      fii_avg_ratio = sub_fii["本比(%)"].mean()
-      sitc_avg_ratio = sub_sitc["本比(%)"].mean()
+      total_cnt = fii_cnt + sitc_cnt
+
+      fii_sum_shrs = sub_fii["買超股數"].sum()
+      sitc_sum_shrs = sub_sitc["買超股數"].sum()
+
+      fii_avg_ratio = sub_fii["本比(%)"].mean() if fii_cnt > 0 else 0.0
+      sitc_avg_ratio = sub_sitc["本比(%)"].mean() if sitc_cnt > 0 else 0.0
+
+      # 雙法人合併外本比/投本比總和與平均集中度推算
+      combined_avg_ratio = round((fii_avg_ratio + sitc_avg_ratio) / 2.0, 3)
+      double_inst_concentration = round(
+          (fii_avg_ratio + sitc_avg_ratio) * np.sqrt(total_cnt), 3
+      )
 
       overlap_rows.append({
           "重複族群": ind,
-          "外資Top100家數": fii_cnt,
-          "外資買超張數": round(fii_sum_shrs, 1),
-          "投信Top100家數": sitc_cnt,
-          "投信買超張數": round(sitc_sum_shrs, 1),
-          "雙法人合計買超(張)": round(fii_sum_shrs + sitc_sum_shrs, 1),
-          "綜合集中強度": round(
-              (fii_avg_ratio + sitc_avg_ratio)
-              * np.sqrt(fii_cnt + sitc_cnt),
-              3,
-          ),
+          "外資家數": fii_cnt,
+          "外資買超股數": int(fii_sum_shrs),
+          "投信家數": sitc_cnt,
+          "投信買超股數": int(sitc_sum_shrs),
+          "雙法人合計股數": int(fii_sum_shrs + sitc_sum_shrs),
+          "入選合計家數": total_cnt,
+          "雙法人合佔比平均(%)": combined_avg_ratio,
+          "雙法人籌碼集中度(%)": double_inst_concentration,
       })
     df_overlap = pd.DataFrame(overlap_rows)
     if not df_overlap.empty:
       df_overlap = df_overlap.sort_values(
-          by="雙法人合計買超(張)", ascending=False
+          by="雙法人籌碼集中度(%)", ascending=False
       ).reset_index(drop=True)
     else:
       df_overlap = pd.DataFrame()

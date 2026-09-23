@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import yfinance as yf
 
 st.set_page_config(
     page_title="台股強勢策略",
@@ -66,8 +67,6 @@ sort_metric = st.sidebar.selectbox(
     index=0,
 )
 
-# [已刪除] strict_filter = st.sidebar.checkbox(...)
-
 
 @st.cache_data(ttl=600)
 def fetch_top100_data():
@@ -105,7 +104,7 @@ def fetch_top100_data():
     time.sleep(0.12)
 
   if len(dates) == 0:
-    return {}, {}, {}, [], 0.0, 0.0, 0.0
+    return {}, {}, {}, []
 
   latest_date = dates[0]
   prev_date = dates[1] if len(dates) > 1 else latest_date
@@ -142,7 +141,6 @@ def fetch_top100_data():
 
   def get_day_market(d_str):
     m_dict = {}
-    idx_close, idx_change, idx_pct = 0.0, 0.0, 0.0
     url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
     try:
       res = session.get(url, timeout=8)
@@ -150,24 +148,6 @@ def fetch_top100_data():
         data = res.json()
         if data.get("stat") == "OK":
           for table in data.get("tables", []):
-            t_title = table.get("title", "")
-            if "發行權證" in t_title or "指數" in t_title:
-              for row in table.get("data", []):
-                if len(row) >= 5 and "發行加權股價指數" in str(row[0]):
-                  try:
-                    c_str = str(row[1]).replace(",", "").strip()
-                    idx_close = float(c_str)
-                    s_str = (
-                        "-1"
-                        if ("-" in str(row[2]) or "跌" in str(row[2]))
-                        else "1"
-                    )
-                    v_str = str(row[3]).replace(",", "").strip()
-                    idx_change = float(v_str) * float(s_str)
-                    p_str = str(row[4]).replace("%", "").strip()
-                    idx_pct = float(p_str)
-                  except:
-                    pass
             if "data" in table:
               for row in table["data"]:
                 if len(row) >= 11:
@@ -213,36 +193,16 @@ def fetch_top100_data():
                       continue
     except:
       pass
-    return m_dict, idx_close, idx_change, idx_pct
+    return m_dict
 
-  today_dict, taiex_close, taiex_change, taiex_pct = get_day_market(latest_date)
-  prev_dict, _, _, _ = get_day_market(prev_date)
+  today_dict = get_day_market(latest_date)
+  prev_dict = get_day_market(prev_date)
 
-  if taiex_close == 0.0 and len(today_dict) > 0:
-    # 備援：若 MI_INDEX 找不到發行量加權指數，可透過 API 或預設呈現
-    pass
-
-  return (
-      today_dict,
-      prev_dict,
-      latest_inst,
-      dates,
-      taiex_close,
-      taiex_change,
-      taiex_pct,
-  )
+  return today_dict, prev_dict, latest_inst, dates
 
 
 with st.spinner("⏳ 正在取得今日與前日成交值百大與法人籌碼對應..."):
-  (
-      today_dict,
-      prev_dict,
-      latest_inst,
-      target_dates,
-      taiex_close,
-      taiex_change,
-      taiex_pct,
-  ) = fetch_top100_data()
+  today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
 
 latest_date = target_dates[0] if target_dates else ""
 prev_date = target_dates[1] if len(target_dates) > 1 else ""
@@ -250,21 +210,40 @@ prev_date = target_dates[1] if len(target_dates) > 1 else ""
 if latest_date:
   st.sidebar.success(f"📅 官方同步日：{latest_date} (對比 {prev_date})")
 
-# ==================== 新增：加權指數顯示區塊 ====================
+# ==================== 新增：自動抓取最近一日大盤加權指數 (含假日防呆) ====================
 st.sidebar.markdown("---")
 st.sidebar.subheader("📈 大盤加權指數")
-if taiex_close > 0:
-  c_sign = "+" if taiex_change >= 0 else ""
-  c_color = "#FF4B4B" if taiex_change >= 0 else "#09AB3B"
-  st.sidebar.markdown(
-      f"**收盤指數**：`{taiex_close:,.2f}`", unsafe_allow_html=True
-  )
-  st.sidebar.markdown(
-      f"**漲跌**：<span style='color:{c_color}; font-weight:bold;'>{c_sign}{taiex_change:,.2f} ({c_sign}{taiex_pct:.2f}%)</span>",
-      unsafe_allow_html=True,
-  )
-else:
-  st.sidebar.info("暫無大盤指數即時數據")
+try:
+  twii = yf.Ticker("^TWII")
+  hist = twii.history(period="5d")  # 拉長天數確保假日也能抓到最近交易日
+  if not hist.empty:
+    latest_row = hist.iloc[-1]
+    current_price = latest_row["Close"]
+    trading_date_str = latest_row.name.strftime("%Y-%m-%d")
+
+    if len(hist) >= 2:
+      prev_close = hist.iloc[-2]["Close"]
+    else:
+      prev_close = current_price
+
+    chg_val = current_price - prev_close
+    chg_pct = (chg_val / prev_close) * 100 if prev_close != 0 else 0.0
+
+    c_sign = "+" if chg_val >= 0 else ""
+    c_color = "#FF4B4B" if chg_val >= 0 else "#09AB3B"
+
+    st.sidebar.caption(f"最近交易日: {trading_date_str}")
+    st.sidebar.markdown(
+        f"**收盤指數**：`{current_price:,.2f}`", unsafe_allow_html=True
+    )
+    st.sidebar.markdown(
+        f"**漲跌**：<span style='color:{c_color}; font-weight:bold;'>{c_sign}{chg_val:,.2f} ({c_sign}{chg_pct:.2f}%)</span>",
+        unsafe_allow_html=True,
+    )
+  else:
+    st.sidebar.info("暫無大盤指數數據")
+except Exception as e:
+  st.sidebar.info("大盤指數載入中或連線受限")
 st.sidebar.markdown("---")
 
 
@@ -352,8 +331,6 @@ def build_group_stats_with_inst(codes_list):
   df = pd.DataFrame(rows)
   if df.empty:
     return pd.DataFrame(), pd.DataFrame()
-
-  # [已移除] strict_filter 條件過濾
 
   sort_col_map = {
       "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）": (
@@ -677,7 +654,6 @@ with tab4:
         "族群": st.session_state.user_industry_map.get(code, ""),
     })
   df_all = pd.DataFrame(all_rows)
-  # [已移除] strict_filter 篩選
   if search_query:
     df_all = df_all[
         df_all["代號"].str.contains(search_query)

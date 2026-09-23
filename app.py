@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢")
+st.title("🎯 台股強勢雷達")
 
 DB_FILE = "industry_db.json"
 
@@ -311,6 +311,18 @@ def build_group_stats_with_inst(codes_list):
       group_summary["平均雙法人合佔比"], 3
   )
 
+  cols = [
+      "族群",
+      "個股數",
+      "總成交值億",
+      "籌碼集中分數",
+      "占比(%)",
+      "平均外本比",
+      "平均投本比",
+      "平均雙法人合佔比",
+  ]
+  group_summary = group_summary[[c for c in cols if c in group_summary.columns]]
+
   metric_map = {
       "外本比(%)": "平均外本比",
       "投本比(%)": "平均投本比",
@@ -351,7 +363,7 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
   st.subheader("🚀 新進榜強勢股")
   if not grp_new_up.empty:
-    c1, c2 = st.columns([1, 1.3])
+    c1, c2 = st.columns([1.1, 1.3])
     with c1:
       st.markdown("### 📊 族群分布")
       st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
@@ -374,7 +386,7 @@ with tab1:
 with tab2:
   st.subheader("📌 持續中強勢股")
   if not grp_rec_up.empty:
-    c1, c2 = st.columns([1, 1.3])
+    c1, c2 = st.columns([1.1, 1.3])
     with c1:
       st.markdown("### 📊 族群分布")
       st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)

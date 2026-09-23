@@ -302,6 +302,9 @@ def build_group_stats_with_inst(codes_list):
   group_summary["占比(%)"] = round(
       (group_summary["個股數"] / total_count) * 100, 2
   )
+  group_summary["籌碼集中分數"] = round(
+      group_summary["平均雙法人合佔比"] * np.sqrt(group_summary["個股數"]), 3
+  )
   group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
   group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
   group_summary["平均雙法人合佔比"] = round(
@@ -311,11 +314,11 @@ def build_group_stats_with_inst(codes_list):
   metric_map = {
       "外本比(%)": "平均外本比",
       "投本比(%)": "平均投本比",
-      "雙法人合佔比(%)": "平均雙法人合佔比",
+      "雙法人合佔比(%)": "籌碼集中分數",
       "漲跌幅(%)": "個股數",
       "成交值(億)": "總成交值億",
   }
-  target_grp_col = metric_map.get(sort_metric, "平均雙法人合佔比")
+  target_grp_col = metric_map.get(sort_metric, "籌碼集中分數")
   group_summary = group_summary.sort_values(
       by=target_grp_col, ascending=False
   ).reset_index(drop=True)

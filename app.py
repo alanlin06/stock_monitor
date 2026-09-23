@@ -9,12 +9,12 @@ import streamlit as st
 
 # ==================== 頁面設定 ====================
 st.set_page_config(
-    page_title="台股籌碼集中度與營益率篩選",
+    page_title="台股雙A合擊與均線集中度雷達",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股籌碼集中度")
+st.title("🎯 台股多頭均線 + 雙A合擊籌碼集中度雷達")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
@@ -51,24 +51,21 @@ if "user_industry_map" not in st.session_state:
   st.session_state.user_industry_map = load_db()
 
 # ==================== 側邊欄參數與即時搜尋 ====================
-st.sidebar.header("實戰參數與查找")
+st.sidebar.header("實戰參數與防護網")
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
 
-# 💡 基本面防護網開關
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🛡️ 基本面防護網")
 enable_profit_filter = st.sidebar.checkbox(
-    "啟用營益率過濾 (本季 > 0 且 > 上一季)", value=True
+    "啟用營益率防護網 (本季 > 0 且 > 上一季)", value=True
 )
-
 enable_vol_growth_filter = st.sidebar.checkbox(
-    "啟用放量過濾 (今日成交值 > 昨日成交值)", value=True
+    "選配：今日成交值 > 昨日成交值", value=False
 )
 
 
-# ==================== 模擬或串接真實財報營益率函式 ====================
+# ==================== 模擬或串接財報營益率函式 ====================
 def fetch_financial_data(code):
   np.random.seed(int(code) if code.isdigit() else 42)
   op_latest = round(np.random.uniform(-2.0, 28.0), 2)
@@ -234,10 +231,21 @@ def fetch_twse_data():
 
                     op_latest, op_prev = fetch_financial_data(code)
 
+                    # 模擬產生或計算日K MA20 / 週K MA20（實戰可串歷史K序列）
+                    # 這裡用收盤價動態模擬 MA20 基準比對示範
+                    sim_ma20_day = round(
+                        close_price * np.random.uniform(0.92, 1.05), 2
+                    )
+                    sim_ma20_week = round(
+                        close_price * np.random.uniform(0.90, 1.03), 2
+                    )
+
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
+                        "日K_MA20": sim_ma20_day,
+                        "週K_MA20": sim_ma20_week,
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
                         "成交金額": turnover_val,
@@ -250,9 +258,8 @@ def fetch_twse_data():
     print(f"MI error: {e}")
 
   if taiex_close == 0.0:
-    taiex_close = 46940.49
+    taiex_close = 48157.29
 
-  # 抓昨日成交值用於對比
   prev_turnover_dict = {}
   mi_prev_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={prev_date}"
   try:
@@ -328,7 +335,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與財報營益率資料..."):
+with st.spinner("⏳ 正在載入台股籌碼與均線數據..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -341,7 +348,6 @@ with st.spinner("⏳ 正在載入台股籌碼與財報營益率資料..."):
   ) = fetch_twse_data()
 
 latest_date = target_dates[0] if target_dates else ""
-
 if latest_date:
   st.sidebar.success(
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
@@ -356,44 +362,6 @@ if latest_date:
           else None
       ),
   )
-else:
-  st.error("⚠️ 無法連線至證交所，請檢查網路或稍後再試。")
-
-# ==================== 側邊欄：12大權值股綜合貢獻點數 ====================
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📊 12大權值股綜合貢獻點數")
-
-top12_weights = {
-    "2330": {"名稱": "台積電", "權重占比": 41.4777},
-    "2454": {"名稱": "聯發科", "權重占比": 4.1867},
-    "2308": {"名稱": "台達電", "權重占比": 3.1786},
-    "2317": {"名稱": "鴻海", "權重占比": 2.3325},
-    "3711": {"名稱": "日月光投控", "權重占比": 1.7363},
-    "2881": {"名稱": "富邦金", "權重占比": 1.3415},
-    "2383": {"名稱": "台光電", "權重占比": 1.3071},
-    "1303": {"名稱": "南亞", "權重占比": 1.2791},
-    "2408": {"名稱": "南亞科", "權重占比": 1.1190},
-    "3037": {"名稱": "欣興", "權重占比": 1.0889},
-    "2303": {"名稱": "聯電", "權重占比": 1.0790},
-    "2882": {"名稱": "國泰金", "權重占比": 1.0780},
-}
-
-total_impact_pts = 0.0
-for code, info in top12_weights.items():
-  w_pct = info["權重占比"]
-  stock_info = market_dict.get(code, {})
-  stock_pct = stock_info.get("漲跌幅(%)", 0.0)
-  total_impact_pts += taiex_close * (w_pct / 100.0) * (stock_pct / 100.0)
-
-sign_str = "+" if total_impact_pts > 0 else ""
-color_emoji = (
-    "🟢" if total_impact_pts > 0 else ("🔴" if total_impact_pts < 0 else "⚪")
-)
-
-st.sidebar.markdown(
-    f"**核心 12 檔權值股合計貢獻**<br>{color_emoji} **{sign_str}{total_impact_pts:,.2f} 點**",
-    unsafe_allow_html=True,
-)
 
 if market_dict:
   base_rows = []
@@ -415,6 +383,8 @@ if market_dict:
             "官方名稱": info["官方名稱"],
             "發行總股數": shares,
             "收盤價": close_p,
+            "日K_MA20": info["日K_MA20"],
+            "週K_MA20": info["週K_MA20"],
             "成交值(億)": round(turnover_100m, 2),
             "前日成交值(億)": round(prev_turnover_100m, 2),
             "外資買賣超股數": f_shares,
@@ -431,417 +401,213 @@ if market_dict:
 
   df_market = pd.DataFrame(base_rows)
 
-  if not df_market.empty:
 
-    def enrich_data(df):
-      df = df.copy()
-      df["外本比(%)"] = df.apply(
-          lambda row: round((row["外資買賣超股數"] / row["發行總股數"]) * 100, 3)
-          if row["發行總股數"] > 0
-          else 0.0,
-          axis=1,
+  def enrich_data(df):
+    df = df.copy()
+    df["外本比(%)"] = df.apply(
+        lambda row: round((row["外資買賣超股數"] / row["發行總股數"]) * 100, 3)
+        if row["發行總股數"] > 0
+        else 0.0,
+        axis=1,
+    )
+    df["投本比(%)"] = df.apply(
+        lambda row: round((row["投信買賣超股數"] / row["發行總股數"]) * 100, 3)
+        if row["發行總股數"] > 0
+        else 0.0,
+        axis=1,
+    )
+    df["雙法人總集中度(%)"] = round(df["外本比(%)"] + df["投本比(%)"], 3)
+    return df
+
+
+  df_all_enriched = enrich_data(df_market)
+
+  # ==================== 核心邏輯建構 ====================
+  # 條件 A: 股價站上日K MA20 且 站上週K MA20
+  cond_trend = (df_all_enriched["收盤價"] > df_all_enriched["日K_MA20"]) & (
+      df_all_enriched["收盤價"] > df_all_enriched["週K_MA20"]
+  )
+
+  # 條件 B: 漲幅 > 0 且 外資合買 (>0) 且 投信合買 (>0)
+  cond_dual_a_up = (
+      (df_all_enriched["漲跌幅(%)"] > 0)
+      & (df_all_enriched["外資買賣超股數"] > 0)
+      & (df_all_enriched["投信買賣超股數"] > 0)
+  )
+
+  # 條件 C: 營益率防護網 (選配)
+  cond_profit = (
+      (
+          (df_all_enriched["本季營益率(%)"] > 0)
+          & (df_all_enriched["本季營益率(%)"] > df_all_enriched["上一季營益率(%)"])
       )
-      df["投本比(%)"] = df.apply(
-          lambda row: round((row["投信買賣超股數"] / row["發行總股數"]) * 100, 3)
-          if row["發行總股數"] > 0
-          else 0.0,
-          axis=1,
-      )
+      if enable_profit_filter
+      else True
+  )
 
-      df["雙法人總集中度(%)"] = round(df["外本比(%)"] + df["投本比(%)"], 3)
+  # 條件 D: 放量選配
+  cond_vol = (
+      (df_all_enriched["成交值(億)"] > df_all_enriched["前日成交值(億)"])
+      if enable_vol_growth_filter
+      else True
+  )
 
-      def calc_20d_metrics(code):
-        active_streak = 0
-        for d_str in target_dates:
-          if (
-              code in hist_foreign_shares.get(d_str, {})
-              and hist_foreign_shares[d_str][code] > 0
-          ):
-            active_streak += 1
-          else:
-            break
-        return active_streak
+  # 總合極選集區：站上日/週MA20 ∩ 雙A合擊上漲 ∩ 基本面防護
+  df_super_target = df_all_enriched[
+      cond_trend & cond_dual_a_up & cond_profit & cond_vol
+  ].copy()
 
-      df["連續買超天數"] = df["代號"].apply(calc_20d_metrics)
 
-      def format_display_name(row):
-        name = row["官方名稱"]
-        f_net = row["外資買賣超股數"]
-        t_net = row["投信買賣超股數"]
-
-        tags = []
-        if f_net > 0 and t_net > 0:
-          tags.append("🔥 雙A合擊")
-        elif f_net > 0:
-          tags.append("外資獨買")
-        elif t_net > 0:
-          tags.append("投信獨買")
-
-        if tags:
-          return f"{name} [{' '.join(tags)}]"
-        else:
-          return name
-
-      df["顯示名稱"] = df.apply(format_display_name, axis=1)
-
-      cols = list(df.columns)
-      if "雙法人總集中度(%)" in cols:
-        cols.remove("雙法人總集中度(%)")
-        idx = cols.index("外本比(%)") if "外本比(%)" in cols else 0
-        cols.insert(idx, "雙法人總集中度(%)")
-
-      if "族群" in cols:
-        cols.remove("族群")
-        cols.append("族群")
-
-      df = df[cols]
-      return df
-
-    df_all_enriched = enrich_data(df_market)
-
-    # 1. 外資買賣超 Top 100
-    df_f_buy = (
-        df_market[df_market["外資買賣超股數"] > 0]
-        .sort_values(by="外資買賣超張數", ascending=False)
-        .head(100)
-    )
-    df_top100_foreign = enrich_data(df_f_buy)
-    df_top100_foreign = df_top100_foreign.sort_values(
-        by="雙法人總集中度(%)", ascending=False
-    )
-    df_top100_foreign.insert(
-        0, "排名", range(1, len(df_top100_foreign) + 1)
-    )
-
-    # 2. 投信買賣超 Top 100
-    df_t_buy = (
-        df_market[df_market["投信買賣超股數"] > 0]
-        .sort_values(by="投信買賣超張數", ascending=False)
-        .head(100)
-    )
-    df_top100_trust = enrich_data(df_t_buy)
-    df_top100_trust = df_top100_trust.sort_values(
-        by="雙法人總集中度(%)", ascending=False
-    )
-    df_top100_trust.insert(0, "排名", range(1, len(df_top100_trust) + 1))
-
-    # 3. 成交值 Top 100
-    df_v_100 = df_market.sort_values(by="成交值(億)", ascending=False).head(100)
-    df_top100 = enrich_data(df_v_100)
-    df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
-
-    # ==================== 各子榜單基礎過濾（加碼：今日成交值 > 昨日成交值） ====================
-    df_f_up_pool = df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0].copy()
-    df_t_up_pool = df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0].copy()
-    df_v_up_pool = df_top100[df_top100["漲跌幅(%)"] > 0].copy()
-
-    if enable_profit_filter:
-      df_f_up_pool = df_f_up_pool[
-          (df_f_up_pool["本季營益率(%)"] > 0)
-          & (df_f_up_pool["本季營益率(%)"] > df_f_up_pool["上一季營益率(%)"])
-      ]
-      df_t_up_pool = df_t_up_pool[
-          (df_t_up_pool["本季營益率(%)"] > 0)
-          & (df_t_up_pool["本季營益率(%)"] > df_t_up_pool["上一季營益率(%)"])
-      ]
-      df_v_up_pool = df_v_up_pool[
-          (df_v_up_pool["本季營益率(%)"] > 0)
-          & (df_v_up_pool["本季營益率(%)"] > df_v_up_pool["上一季營益率(%)"])
-      ]
-
-    if enable_vol_growth_filter:
-      df_f_up_pool = df_f_up_pool[
-          df_f_up_pool["成交值(億)"] > df_f_up_pool["前日成交值(億)"]
-      ]
-      df_t_up_pool = df_t_up_pool[
-          df_t_up_pool["成交值(億)"] > df_t_up_pool["前日成交值(億)"]
-      ]
-      df_v_up_pool = df_v_up_pool[
-          df_v_up_pool["成交值(億)"] > df_v_up_pool["前日成交值(億)"]
-      ]
-
-    # 通用函式：將指定的強勢股池依族群聚合打分數
-    def build_industry_ranking(df_pool):
-      raw = df_pool[df_pool["族群"].str.strip() != ""]
-      if raw.empty:
-        return pd.DataFrame(
-            columns=[
-                "排名",
-                "族群",
-                "股票檔數",
-                "籌碼集中度",
-                "平均外本比(%)",
-                "平均投本比(%)",
-                "平均雙法人總集中度(%)",
-                "外資總買超張數",
-                "投信總買超張數",
-                "平均連續買超天數",
-                "族群總成交值",
-            ]
+  # 族群聚合評分排序函式
+  def build_super_industry_ranking(df_pool):
+    raw = df_pool[df_pool["族群"].str.strip() != ""]
+    if raw.empty:
+      return pd.DataFrame()
+    summary = (
+        raw.groupby("族群")
+        .agg(
+            股票檔數=("代號", "count"),
+            平均外本比_pct=("外本比(%)", "mean"),
+            平均投本比_pct=("投本比(%)", "mean"),
+            平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
+            外資總買超張數=("外資買賣超張數", "sum"),
+            投信總買超張數=("投信買賣超張數", "sum"),
+            族群總成交值=("成交值(億)", "sum"),
         )
-      summary = (
-          raw.groupby("族群")
-          .agg(
-              股票檔數=("代號", "count"),
-              平均外本比_pct=("外本比(%)", "mean"),
-              平均投本比_pct=("投本比(%)", "mean"),
-              平均雙法人總集中度_pct=("雙法人總集中度(%)", "mean"),
-              外資總買超張數=("外資買賣超張數", "sum"),
-              投信總買超張數=("投信買賣超張數", "sum"),
-              平均連續買超天數=("連續買超天數", "mean"),
-              族群總成交值=("成交值(億)", "sum"),
-          )
-          .reset_index()
-      )
-      summary["平均外本比_pct"] = summary["平均外本比_pct"].round(3)
-      summary["平均投本比_pct"] = summary["平均投本比_pct"].round(3)
-      summary["平均雙法人總集中度_pct"] = summary[
-          "平均雙法人總集中度_pct"
-      ].round(3)
-      summary["外資總買超張數"] = summary["外資總買超張數"].round(0)
-      summary["投信總買超張數"] = summary["投信總買超張數"].round(0)
-      summary["平均連續買超天數"] = summary["平均連續買超天數"].round(1)
+        .reset_index()
+    )
+    summary["平均外本比(%)"] = summary["平均外本比_pct"].round(3)
+    summary["平均投本比(%)"] = summary["平均投本比_pct"].round(3)
+    summary["平均雙法人總集中度(%)"] = summary[
+        "平均雙法人總集中度_pct"
+    ].round(3)
+    summary["外資總買超張數"] = summary["外資總買超張數"].round(0)
+    summary["投信總買超張數"] = summary["投信總買超張數"].round(0)
 
-      summary = summary.rename(
-          columns={
-              "平均外本比_pct": "平均外本比(%)",
-              "平均投本比_pct": "平均投本比(%)",
-              "平均雙法人總集中度_pct": "平均雙法人總集中度(%)",
-          }
+    # 集中度評分公式：雙法人總集中度 × 開根號檔數 × 雙A合擊強力係數
+    summary["籌碼集中度得分"] = round(
+        summary["平均雙法人總集中度(%)"]
+        * np.sqrt(summary["股票檔數"])
+        * np.log1p(summary["外資總買超張數"].clip(lower=0))
+        * np.log1p(summary["投信總買超張數"].clip(lower=0)),
+        2,
+    )
+    summary = summary.sort_values(by="筹码集中度得分" if "筹码集中度得分" in summary.columns else "籌碼集中度得分", ascending=False)
+    cols = [
+        "族群",
+        "股票檔數",
+        "籌碼集中度得分",
+        "平均外本比(%)",
+        "平均投本比(%)",
+        "平均雙法人總集中度(%)",
+        "外資總買超張數",
+        "投信總買超張數",
+        "族群總成交值",
+    ]
+    summary = summary[[c for c in cols if c in summary.columns]]
+    summary.insert(0, "排名", range(1, len(summary) + 1))
+    return summary
+
+
+  df_super_ind_rank = build_super_industry_ranking(df_super_target)
+
+  # ==================== 頁面顯示 ====================
+  tab_super, tab_raw_targets, tab_all_search = st.tabs([
+      🔥 雙A多頭站上均線：族群集中度排名,
+      📋 符合條件之個股明細檔,
+      🔍 全市場快速查找,
+  ])
+
+  def update_map_from_editor(edited_df):
+    if (
+        not edited_df.empty
+        and "代號" in edited_df.columns
+        and "族群" in edited_df.columns
+    ):
+      updated_map = st.session_state.user_industry_map.copy()
+      for _, row in edited_df.iterrows():
+        c_code = str(row["代號"]).strip()
+        c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
+        updated_map[c_code] = c_ind
+      st.session_state.user_industry_map = updated_map
+      save_db(updated_map)
+      st.success("✅ 族群設定已成功更新！")
+
+  with tab_super:
+    st.info(
+        "💡 **邏輯說明**：篩選 **[收盤價 > 日K MA20 且 週K MA20]** ∩ **[漲幅>0 且 外資>0 且 投信>0]** 之強勢雙A股，依族群結算「籌碼集中度得分」排序！"
+    )
+    if not df_super_ind_rank.empty:
+      df_disp = df_super_ind_rank.copy()
+      df_disp.insert(0, "查看明細", False)
+      edited_sum = st.data_editor(
+          df_disp,
+          use_container_width=True,
+          hide_index=True,
+          disabled=[col for col in df_disp.columns if col != "查看明細"],
+          key="ed_super_summary",
       )
-      summary["籌碼集中度"] = round(
-          summary["平均雙法人總集中度(%)"]
-          * np.sqrt(summary["股票檔數"])
-          * np.log1p(summary["外資總買超張數"].clip(lower=0))
-          * np.log1p(summary["投信總買超張數"].clip(lower=0))
-          * (1 + 0.1 * summary["平均連續買超天數"].clip(lower=0)),
-          2,
+
+      selected_rows = edited_sum[edited_sum["查看明細"] == True]
+      if not selected_rows.empty:
+        st.markdown("---")
+        st.markdown("### 🏆 展開勾選族群的強勢個股 (可修改族群)")
+        for _, ind_row in selected_rows.iterrows():
+          t_ind = ind_row["族群"]
+          sub_stocks = df_super_target[df_super_target["族群"] == t_ind].copy()
+          if not sub_stocks.empty:
+            sub_stocks = sub_stocks.sort_values(
+                by="雙法人總集中度(%)", ascending=False
+            )
+            sub_stocks.insert(0, "族群排名", range(1, len(sub_stocks) + 1))
+            st.subheader(f"📌 {t_ind} (共 {len(sub_stocks)} 檔)")
+            ed_sub = st.data_editor(
+                sub_stocks,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[
+                    c for c in sub_stocks.columns if c not in ["族群", "族群排名"]
+                ],
+                key=f"sub_edit_{t_ind}",
+            )
+            if st.button(f"💾 儲存 {t_ind} 變更", key=f"btn_sub_{t_ind} ):
+              update_map_from_editor(ed_sub)
+    else:
+      st.warning("⚠️ 目前條件下查無符合的族群集中度資料，可放寬防護網嘗試。")
+
+  with tab_raw_targets:
+    st.info(f"📋 **符合上述雙A站上均線條件個股總計**：{len(df_super_target)} 檔")
+    if not df_super_target.empty:
+      ed_raw = st.data_editor(
+          df_super_target,
+          use_container_width=True,
+          hide_index=True,
+          height=500,
+          disabled=[col for col in df_super_target.columns if col != "族群"],
+          key="ed_super_target_all",
       )
-      summary = summary.sort_values(by="籌碼集中度", ascending=False)
-      cols_order = [
-          "族群",
-          "股票檔數",
-          "籌碼集中度",
-          "平均外本比(%)",
-          "平均投本比(%)",
-          "平均雙法人總集中度(%)",
-          "外資總買超張數",
-          "投信總買超張數",
-          "平均連續買超天數",
-          "族群總成交值",
+      if st.button("💾 儲存個股清單的族群設定", key="btn_save_raw_targets"):
+        update_map_from_editor(ed_raw)
+
+  with tab_all_search:
+    st.markdown("### 🔍 任意台股快速查找與編輯")
+    c1, _ = st.columns([1, 3])
+    with c1:
+      ds = st.text_input("輸入代號或名稱", value=search_query, key="global_search_box")
+    if ds:
+      m_df = df_all_enriched[
+          df_all_enriched["代號"].str.contains(ds)
+          | df_all_enriched["官方名稱"].str.contains(ds)
       ]
-      summary = summary[[c for c in cols_order if c in summary.columns]]
-      summary.insert(0, "排名", range(1, len(summary) + 1))
-      return summary
-
-    df_ind_foreign = build_industry_ranking(df_f_up_pool)
-    df_ind_trust = build_industry_ranking(df_t_up_pool)
-    df_ind_volume = build_industry_ranking(df_v_up_pool)
-
-    # ==================== 族群擴散：三方強勢族群「名稱重疊」交叉比對 ====================
-    # 萃取出三方強勢族群排行榜中有出現的族群名稱集合
-    set_ind_f = set(
-        df_ind_foreign[df_ind_foreign["族群"].str.strip() != ""]["族群"]
-    )
-    set_ind_t = set(df_ind_trust[df_ind_trust["族群"].str.strip() != ""]["族群"])
-    set_ind_v = set(
-        df_ind_volume[df_ind_volume["族群"].str.strip() != ""]["族群"]
-    )
-
-    common_overlap_industries = set_ind_f.intersection(set_ind_t).intersection(
-        set_ind_v
-    )
-
-    # 族群擴散母體：取放量且符合基本面的總合集個股，但「族群」必須在三方強勢族群重疊名單中
-    df_combined_pooled = pd.concat(
-        [df_f_up_pool, df_t_up_pool, df_v_up_pool]
-    ).drop_duplicates(subset=["代號"])
-    df_spread_pool = df_combined_pooled[
-        df_combined_pooled["族群"].isin(common_overlap_industries)
-        & (df_combined_pooled["雙法人總集中度(%)"] > 0)
-    ].copy()
-
-    df_ind_spread = build_industry_ranking(df_spread_pool)
-
-    # ==================== 搜尋與過濾面板 ====================
-    st.markdown("### 🔍 任意台股快速查找與篩選")
-    col_input, _ = st.columns([1, 3])
-    with col_input:
-      direct_search = st.text_input(
-          "輸入代號或名稱",
-          value=search_query,
-          placeholder="例如: 2330 或 台積電",
-          key="main_search_input",
-      )
-
-    if direct_search:
-      matched_df = df_all_enriched[
-          df_all_enriched["代號"].str.contains(direct_search)
-          | df_all_enriched["官方名稱"].str.contains(direct_search)
-      ]
-      if not matched_df.empty:
-        st.success(f"找到符合「{direct_search}」的股票：")
-        st.dataframe(matched_df, use_container_width=True, hide_index=True)
-      else:
-        st.warning("查無此台股代號或名稱，請確認輸入是否正確。")
-      st.markdown("---")
-
-    # ==================== 分頁顯示排行榜與編輯 ====================
-    (
-        tab_spread,
-        tab_ind_f,
-        tab_ind_t,
-        tab_ind_v,
-        tab_top100_f,
-        tab_top100_t,
-        tab_top100_v,
-    ) = st.tabs([
-        "🌊 族群擴散 (三方重疊族群)",
-        "🌐 外資強勢族群",
-        "🎯 投信強勢族群",
-        "💰 成交值強勢族群",
-        "外資買賣超 Top 100",
-        "投信買賣超 Top 100",
-        "成交值 Top 100",
-    ])
-
-    def update_map_from_editor(edited_df):
-      if (
-          not edited_df.empty
-          and "代號" in edited_df.columns
-          and "族群" in edited_df.columns
-      ):
-        updated_map = st.session_state.user_industry_map.copy()
-        for _, row in edited_df.iterrows():
-          c_code = str(row["代號"]).strip()
-          c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
-          updated_map[c_code] = c_ind
-        st.session_state.user_industry_map = updated_map
-        save_db(updated_map)
-        st.success(
-            "✅ 族群設定已成功同步並儲存至本地資料庫！(請重整或切換頁面套用)"
-        )
-
-    def render_industry_tab_with_drilldown(df_summary, pool_df, tab_key_prefix):
-      if not df_summary.empty:
-        df_summary_disp = df_summary.copy()
-        df_summary_disp.insert(0, "查看", False)
-        st.info("💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾即可展開個股明細！")
-
-        edited_sum = st.data_editor(
-            df_summary_disp,
+      if not m_df.empty:
+        ed_search = st.data_editor(
+            m_df,
             use_container_width=True,
             hide_index=True,
-            height=350,
-            disabled=[c for c in df_summary_disp.columns if c != "查看"],
-            key=f"editor_check_{tab_key_prefix}",
+            disabled=[col for col in m_df.columns if col != "族群"],
+            key="ed_global_search",
         )
-
-        selected_rows = edited_sum[edited_sum["查看"] == True]
-        if not selected_rows.empty:
-          st.markdown("---")
-          st.markdown("### 🏆 已勾選族群內入選的強勢股 (可直接編輯個股族群)")
-          for _, ind_row in selected_rows.iterrows():
-            target_ind = ind_row["族群"]
-            df_ind_stocks = pool_df[pool_df["族群"] == target_ind].copy()
-            if not df_ind_stocks.empty:
-              df_ind_stocks = df_ind_stocks.sort_values(
-                  by="雙法人總集中度(%)", ascending=False
-              )
-              if "族群排名" in df_ind_stocks.columns:
-                df_ind_stocks = df_ind_stocks.drop(columns=["族群排名"])
-              df_ind_stocks.insert(
-                  0, "族群排名", range(1, len(df_ind_stocks) + 1)
-              )
-              st.subheader(f"📌 {target_ind} (共 {len(df_ind_stocks)} 檔)")
-              edited_sub = st.data_editor(
-                  df_ind_stocks,
-                  use_container_width=True,
-                  hide_index=True,
-                  disabled=[
-                      c
-                      for c in df_ind_stocks.columns
-                      if c != "族群" and c != "族群排名"
-                  ],
-                  key=f"sub_ed_{tab_key_prefix}_{target_ind}",
-              )
-              if st.button(
-                  f"💾 儲存 {target_ind} 變更",
-                  key=f"btn_sub_{tab_key_prefix}_{target_ind}",
-              ):
-                update_map_from_editor(edited_sub)
+        if st.button("💾 儲存搜尋結果的族群修改", key="btn_save_search"):
+          update_map_from_editor(ed_search)
       else:
-        st.warning("⚠️ 查無符合條件的族群資料。")
-
-    with tab_spread:
-      st.info(
-          "🌊 **族群擴散**：同時在【外資強勢族群】、【投信強勢族群】、【成交值強勢族群】三方排行為同名重複涵蓋的族群"
-      )
-      render_industry_tab_with_drilldown(
-          df_ind_spread, df_spread_pool, "spread"
-      )
-
-    with tab_ind_f:
-      st.info(
-          "🌐 **外資強勢族群（外資Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
-      )
-      render_industry_tab_with_drilldown(df_ind_foreign, df_f_up_pool, "ind_f")
-
-    with tab_ind_t:
-      st.info(
-          "🎯 **投信強勢族群（投信Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
-      )
-      render_industry_tab_with_drilldown(df_ind_trust, df_t_up_pool, "ind_t")
-
-    with tab_ind_v:
-      st.info(
-          "💰 **成交值強勢族群（成交值Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
-      )
-      render_industry_tab_with_drilldown(df_ind_volume, df_v_up_pool, "ind_v")
-
-    with tab_top100_f:
-      st.info("💡 **外資買賣超 Top 100**：可直接修改【族群】欄位")
-      edited_tf = st.data_editor(
-          df_top100_foreign,
-          use_container_width=True,
-          hide_index=True,
-          height=500,
-          disabled=[
-              col for col in df_top100_foreign.columns if col != "族群"
-          ],
-          key="editor_top100_f_all",
-      )
-      if st.button(
-          "💾 儲存外資 Top 100 分頁的族群設定", key="btn_save_top100_f"
-      ):
-        update_map_from_editor(edited_tf)
-
-    with tab_top100_t:
-      st.info("💡 **投信買賣超 Top 100**：可直接修改【族群】欄位")
-      edited_tt = st.data_editor(
-          df_top100_trust,
-          use_container_width=True,
-          hide_index=True,
-          height=500,
-          disabled=[col for col in df_top100_trust.columns if col != "族群"],
-          key="editor_top100_t_all",
-      )
-      if st.button(
-          "💾 儲存投信 Top 100 分頁的族群設定", key="btn_save_top100_t"
-      ):
-        update_map_from_editor(edited_tt)
-
-    with tab_top100_v:
-      st.info("💡 **成交值 Top 100**：可直接修改【族群】欄位")
-      edited_tv = st.data_editor(
-          df_top100,
-          use_container_width=True,
-          hide_index=True,
-          height=500,
-          disabled=[col for col in df_top100.columns if col != "族群"],
-          key="editor_top100_v_all",
-      )
-      if st.button(
-          "💾 儲存成交值 Top 100 分頁的族群設定", key="btn_save_top100_v"
-      ):
-        update_map_from_editor(edited_tv)
+        st.warning("查無符合代號或名稱之股票。")

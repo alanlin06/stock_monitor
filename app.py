@@ -63,6 +63,10 @@ enable_profit_filter = st.sidebar.checkbox(
     "啟用營益率過濾 (本季 > 0 且 > 上一季)", value=True
 )
 
+enable_vol_growth_filter = st.sidebar.checkbox(
+    "啟用放量過濾 (今日成交值 > 昨日成交值)", value=True
+)
+
 
 # ==================== 模擬或串接真實財報營益率函式 ====================
 def fetch_financial_data(code):
@@ -120,6 +124,7 @@ def fetch_twse_data():
     return {}, {}, {}, [], [], 0.0, 0.0, 0.0
 
   latest_date = dates[0]
+  prev_date = dates[1] if len(dates) > 1 else latest_date
   market_dict = {}
   taiex_close = 0.0
   taiex_change = 0.0
@@ -247,6 +252,35 @@ def fetch_twse_data():
   if taiex_close == 0.0:
     taiex_close = 46940.49
 
+  # 抓昨日成交值用於對比
+  prev_turnover_dict = {}
+  mi_prev_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={prev_date}"
+  try:
+    res_pmi = session.get(mi_prev_url, timeout=8)
+    if res_pmi.status_code == 200:
+      pdata = res_pmi.json()
+      if pdata.get("stat") == "OK":
+        for table in pdata.get("tables", []):
+          if "data" in table:
+            for row in table["data"]:
+              if len(row) >= 11:
+                code = str(row[0]).strip()
+                if len(code) == 4 and code.isdigit():
+                  try:
+                    tv = 0.0
+                    try:
+                      tv = float(str(row[4]).replace(",", ""))
+                    except:
+                      try:
+                        tv = float(str(row[5]).replace(",", ""))
+                      except:
+                        pass
+                    prev_turnover_dict[code] = tv
+                  except:
+                    pass
+  except:
+    pass
+
   latest_foreign_shares = {}
   latest_trust_shares = {}
   hist_foreign_shares = {}
@@ -276,6 +310,11 @@ def fetch_twse_data():
     except:
       pass
     time.sleep(0.15)
+
+  for code in market_dict:
+    market_dict[code]["前日成交金額"] = prev_turnover_dict.get(
+        code, market_dict[code]["成交金額"]
+    )
 
   return (
       market_dict,
@@ -307,7 +346,6 @@ if latest_date:
   st.sidebar.success(
       f"📅 官方同步日：{latest_date[:4]}/{latest_date[4:6]}/{latest_date[6:]}"
   )
-
   change_sign = "+" if taiex_change > 0 else ""
   st.sidebar.metric(
       label="📈 大盤加權指數收盤",
@@ -365,6 +403,7 @@ if market_dict:
     close_p = info["收盤價"]
     shares = info["發行總股數"]
     turnover_100m = info.get("成交金額", 0.0) / 100000000
+    prev_turnover_100m = info.get("前日成交金額", 0.0) / 100000000
     op_latest = info["本季營益率(%)"]
     op_prev = info["上一季營益率(%)"]
 
@@ -377,6 +416,7 @@ if market_dict:
             "發行總股數": shares,
             "收盤價": close_p,
             "成交值(億)": round(turnover_100m, 2),
+            "前日成交值(億)": round(prev_turnover_100m, 2),
             "外資買賣超股數": f_shares,
             "外資買賣超張數": f_shares / 1000,
             "投信買賣超股數": t_shares,
@@ -490,23 +530,10 @@ if market_dict:
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # ==================== 篩選池與基本面過濾 ====================
+    # ==================== 各子榜單基礎過濾（加碼：今日成交值 > 昨日成交值） ====================
     df_f_up_pool = df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0].copy()
     df_t_up_pool = df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0].copy()
     df_v_up_pool = df_top100[df_top100["漲跌幅(%)"] > 0].copy()
-
-    # 族群擴散篩選池：三方重疊 且 上漲 且 集中度>0
-    common_codes_spread = (
-        set(df_f_up_pool["代號"])
-        .intersection(set(df_t_up_pool["代號"]))
-        .intersection(set(df_v_up_pool["代號"]))
-    )
-
-    df_spread_pool = df_top100[
-        df_top100["代號"].isin(common_codes_spread)
-        & (df_top100["漲跌幅(%)"] > 0)
-        & (df_top100["雙法人總集中度(%)"] > 0)
-    ].copy()
 
     if enable_profit_filter:
       df_f_up_pool = df_f_up_pool[
@@ -521,9 +548,16 @@ if market_dict:
           (df_v_up_pool["本季營益率(%)"] > 0)
           & (df_v_up_pool["本季營益率(%)"] > df_v_up_pool["上一季營益率(%)"])
       ]
-      df_spread_pool = df_spread_pool[
-          (df_spread_pool["本季營益率(%)"] > 0)
-          & (df_spread_pool["本季營益率(%)"] > df_spread_pool["上一季營益率(%)"])
+
+    if enable_vol_growth_filter:
+      df_f_up_pool = df_f_up_pool[
+          df_f_up_pool["成交值(億)"] > df_f_up_pool["前日成交值(億)"]
+      ]
+      df_t_up_pool = df_t_up_pool[
+          df_t_up_pool["成交值(億)"] > df_t_up_pool["前日成交值(億)"]
+      ]
+      df_v_up_pool = df_v_up_pool[
+          df_v_up_pool["成交值(億)"] > df_v_up_pool["前日成交值(億)"]
       ]
 
     # 通用函式：將指定的強勢股池依族群聚合打分數
@@ -600,10 +634,34 @@ if market_dict:
       summary.insert(0, "排名", range(1, len(summary) + 1))
       return summary
 
-    df_ind_spread = build_industry_ranking(df_spread_pool)
     df_ind_foreign = build_industry_ranking(df_f_up_pool)
     df_ind_trust = build_industry_ranking(df_t_up_pool)
     df_ind_volume = build_industry_ranking(df_v_up_pool)
+
+    # ==================== 族群擴散：三方強勢族群「名稱重疊」交叉比對 ====================
+    # 萃取出三方強勢族群排行榜中有出現的族群名稱集合
+    set_ind_f = set(
+        df_ind_foreign[df_ind_foreign["族群"].str.strip() != ""]["族群"]
+    )
+    set_ind_t = set(df_ind_trust[df_ind_trust["族群"].str.strip() != ""]["族群"])
+    set_ind_v = set(
+        df_ind_volume[df_ind_volume["族群"].str.strip() != ""]["族群"]
+    )
+
+    common_overlap_industries = set_ind_f.intersection(set_ind_t).intersection(
+        set_ind_v
+    )
+
+    # 族群擴散母體：取放量且符合基本面的總合集個股，但「族群」必須在三方強勢族群重疊名單中
+    df_combined_pooled = pd.concat(
+        [df_f_up_pool, df_t_up_pool, df_v_up_pool]
+    ).drop_duplicates(subset=["代號"])
+    df_spread_pool = df_combined_pooled[
+        df_combined_pooled["族群"].isin(common_overlap_industries)
+        & (df_combined_pooled["雙法人總集中度(%)"] > 0)
+    ].copy()
+
+    df_ind_spread = build_industry_ranking(df_spread_pool)
 
     # ==================== 搜尋與過濾面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
@@ -638,7 +696,7 @@ if market_dict:
         tab_top100_t,
         tab_top100_v,
     ) = st.tabs([
-        "🌊 族群擴散",
+        "🌊 族群擴散 (三方重疊族群)",
         "🌐 外資強勢族群",
         "🎯 投信強勢族群",
         "💰 成交值強勢族群",
@@ -716,20 +774,29 @@ if market_dict:
         st.warning("⚠️ 查無符合條件的族群資料。")
 
     with tab_spread:
+      st.info(
+          "🌊 **族群擴散**：同時在【外資強勢族群】、【投信強勢族群】、【成交值強勢族群】三方排行為同名重複涵蓋的族群"
+      )
       render_industry_tab_with_drilldown(
           df_ind_spread, df_spread_pool, "spread"
       )
 
     with tab_ind_f:
-      st.info("🌐 **外資強勢族群（外資Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      st.info(
+          "🌐 **外資強勢族群（外資Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
+      )
       render_industry_tab_with_drilldown(df_ind_foreign, df_f_up_pool, "ind_f")
 
     with tab_ind_t:
-      st.info("🎯 **投信強勢族群（投信Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      st.info(
+          "🎯 **投信強勢族群（投信Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
+      )
       render_industry_tab_with_drilldown(df_ind_trust, df_t_up_pool, "ind_t")
 
     with tab_ind_v:
-      st.info("💰 **成交值強勢族群（成交值Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      st.info(
+          "💰 **成交值強勢族群（成交值Top100 ∩ 上漲 ∩ 放量 ∩ 營益率過濾）**"
+      )
       render_industry_tab_with_drilldown(df_ind_volume, df_v_up_pool, "ind_v")
 
     with tab_top100_f:

@@ -528,7 +528,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-  st.subheader("🚀 新進榜強勢股（效率共振排序）")
+  st.subheader("🚀 新進榜強勢股")
   if not grp_new_up.empty:
     c1, c2 = st.columns([1.1, 1.4])
     with c1:

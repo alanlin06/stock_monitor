@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-import yfinance as yf
 
 st.set_page_config(
     page_title="台股強勢策略",
@@ -51,20 +50,6 @@ if "user_industry_map" not in st.session_state:
 
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
-)
-
-sort_metric = st.sidebar.selectbox(
-    "📊 明細/族群表格排序依據",
-    [
-        "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）",
-        "成交值放大倍數",
-        "雙法人合佔比(%)",
-        "漲跌幅(%)",
-        "外本比(%)",
-        "投本比(%)",
-        "成交值(億)",
-    ],
-    index=0,
 )
 
 
@@ -208,43 +193,8 @@ latest_date = target_dates[0] if target_dates else ""
 prev_date = target_dates[1] if len(target_dates) > 1 else ""
 
 if latest_date:
+  st.sidebar.markdown("---")
   st.sidebar.success(f"📅 官方同步日：{latest_date} (對比 {prev_date})")
-
-# ==================== 新增：自動抓取最近一日大盤加權指數 (含假日防呆) ====================
-st.sidebar.markdown("---")
-st.sidebar.subheader("📈 大盤加權指數")
-try:
-  twii = yf.Ticker("^TWII")
-  hist = twii.history(period="5d")  # 拉長天數確保假日也能抓到最近交易日
-  if not hist.empty:
-    latest_row = hist.iloc[-1]
-    current_price = latest_row["Close"]
-    trading_date_str = latest_row.name.strftime("%Y-%m-%d")
-
-    if len(hist) >= 2:
-      prev_close = hist.iloc[-2]["Close"]
-    else:
-      prev_close = current_price
-
-    chg_val = current_price - prev_close
-    chg_pct = (chg_val / prev_close) * 100 if prev_close != 0 else 0.0
-
-    c_sign = "+" if chg_val >= 0 else ""
-    c_color = "#FF4B4B" if chg_val >= 0 else "#09AB3B"
-
-    st.sidebar.caption(f"最近交易日: {trading_date_str}")
-    st.sidebar.markdown(
-        f"**收盤指數**：`{current_price:,.2f}`", unsafe_allow_html=True
-    )
-    st.sidebar.markdown(
-        f"**漲跌**：<span style='color:{c_color}; font-weight:bold;'>{c_sign}{chg_val:,.2f} ({c_sign}{chg_pct:.2f}%)</span>",
-        unsafe_allow_html=True,
-    )
-  else:
-    st.sidebar.info("暫無大盤指數數據")
-except Exception as e:
-  st.sidebar.info("大盤指數載入中或連線受限")
-st.sidebar.markdown("---")
 
 
 def get_top_n_codes(m_dict, n=100):
@@ -332,19 +282,8 @@ def build_group_stats_with_inst(codes_list):
   if df.empty:
     return pd.DataFrame(), pd.DataFrame()
 
-  sort_col_map = {
-      "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）": (
-          "🔥 效率籌碼共振分"
-      ),
-      "成交值放大倍數": "成交值放大倍數",
-      "雙法人合佔比(%)": "雙法人合佔比(%)",
-      "漲跌幅(%)": "漲跌幅(%)",
-      "外本比(%)": "外本比(%)",
-      "投本比(%)": "投本比(%)",
-      "成交值(億)": "成交值(億)",
-  }
-  actual_sort_col = sort_col_map.get(sort_metric, "🔥 效率籌碼共振分")
-  df = df.sort_values(by=actual_sort_col, ascending=False).reset_index(
+  # 預設固定依效率籌碼共振分由高到低排序
+  df = df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(
       drop=True
   )
 

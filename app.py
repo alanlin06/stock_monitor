@@ -7,16 +7,14 @@ import pandas as pd
 import requests
 import streamlit as st
 
-# ==================== 頁面設定 ====================
 st.set_page_config(
     page_title="台股成交值百大新面孔與常客族群雷達",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股成交值百大：漲勢新面孔與常客族群雷達")
+st.title("🎯 台股成交值百大：漲勢新面孔與常客族群雷達（含雙法人集中度）")
 
-# ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
 
 
@@ -50,7 +48,6 @@ def save_db(db_data):
 if "user_industry_map" not in st.session_state:
   st.session_state.user_industry_map = load_db()
 
-# ==================== 側邊欄即時搜尋與狀態 ====================
 search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
@@ -92,16 +89,43 @@ def fetch_top100_data():
     time.sleep(0.12)
 
   if len(dates) == 0:
-    return {}, {}, [], 0.0, 0.0, 0.0
+    return {}, {}, {}, [], 48157.29, 0.0, 0.0
 
   latest_date = dates[0]
   prev_date = dates[1] if len(dates) > 1 else latest_date
 
-  taiex_close, taiex_change, taiex_pct = 48157.29, 0.0, 0.0
+  def get_t86_map(d_str):
+    t_map = {}
+    url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALLBUT0999"
+    try:
+      r = session.get(url, timeout=6)
+      if r.status_code == 200:
+        d = r.json()
+        if d.get("stat") == "OK" and "data" in d:
+          for row in d["data"]:
+            if len(row) > 10:
+              code = str(row[0]).strip()
+              if len(code) == 4 and code.isdigit():
+                try:
+                  f_val = float(str(row[4]).replace(",", ""))
+                  t_val = float(str(row[10]).replace(",", ""))
+                  t_map[code] = {
+                      "外資淨買超": f_val,
+                      "投信淨買超": t_val,
+                      "雙法人淨買超": f_val + t_val,
+                  }
+                except:
+                  pass
+    except:
+      pass
+    time.sleep(0.12)
+    return t_map
+
+  latest_inst = get_t86_map(latest_date)
 
   def get_day_market(d_str):
     m_dict = {}
-    idx_close, idx_chg, idx_pct = 0.0, 0.0, 0.0
+    idx_close, idx_chg, idx_pct = 48157.29, 0.0, 0.0
     url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
     try:
       res = session.get(url, timeout=8)
@@ -111,7 +135,7 @@ def fetch_top100_data():
           for table in data.get("tables", []):
             for row in table.get("data", []):
               row_str = "".join([str(c) for c in row])
-              if "加權指數" in row_str and idx_close == 0:
+              if "加權指數" in row_str and idx_close == 48157.29:
                 for c in row:
                   cs = str(c).replace(",", "").strip()
                   try:
@@ -172,16 +196,22 @@ def fetch_top100_data():
   today_dict, taiex_close, taiex_change, taiex_pct = get_day_market(latest_date)
   prev_dict, _, _, _ = get_day_market(prev_date)
 
-  if taiex_close == 0:
-    taiex_close = 48157.29
+  return (
+      today_dict,
+      prev_dict,
+      latest_inst,
+      dates,
+      taiex_close,
+      taiex_change,
+      taiex_pct,
+  )
 
-  return today_dict, prev_dict, dates, taiex_close, taiex_change, taiex_pct
 
-
-with st.spinner("⏳ 正在取得今日與前日成交值百大與族群對應..."):
+with st.spinner("⏳ 正在取得今日與前日成交值百大與法人籌碼對應..."):
   (
       today_dict,
       prev_dict,
+      latest_inst,
       target_dates,
       taiex_close,
       taiex_change,
@@ -207,14 +237,12 @@ def get_top_n_codes(m_dict, n=100):
 today_top100 = get_top_n_codes(today_dict, 100)
 prev_top100 = get_top_n_codes(prev_dict, 100)
 
-# 1. 誰是今天突然出現的個股（今天在前100、昨天不在前100）且「只抓上漲」
 newcomer_codes_up = [
     c
     for c in today_top100
     if c not in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0
 ]
 
-# 2. 重複股票（昨天在前100、今天也在前100）且「只抓上漲」
 recurring_codes_up = [
     c
     for c in today_top100
@@ -222,18 +250,30 @@ recurring_codes_up = [
 ]
 
 
-def build_group_stats(codes_list):
+def build_group_stats_with_inst(codes_list):
   rows = []
   for c in codes_list:
     if c in today_dict:
       info = today_dict[c]
       ind = st.session_state.user_industry_map.get(c, "未分類")
+      turnover_amt = info["成交金額"]
+      inst_info = latest_inst.get(
+          c, {"外資淨買超": 0.0, "投信淨買超": 0.0, "雙法人淨買超": 0.0}
+      )
+      double_inst_amt = inst_info["雙法人淨買超"]
+      conc_pct = (
+          (double_inst_amt / turnover_amt) * 100 if turnover_amt > 0 else 0.0
+      )
+
       rows.append({
           "代號": c,
           "官方名稱": info["官方名稱"],
           "收盤價": info["收盤價"],
           "漲跌幅(%)": info["漲跌幅(%)"],
-          "成交值(億)": round(info["成交金額"] / 100000000, 2),
+          "成交值(億)": round(turnover_amt / 100000000, 2),
+          "外資買超(億)": round(inst_info["外資淨買超"] / 100000000, 3),
+          "投信買超(億)": round(inst_info["投信淨買超"] / 100000000, 3),
+          "雙法人買超占比(%)": round(conc_pct, 2),
           "族群": ind,
       })
   df = pd.DataFrame(rows)
@@ -243,18 +283,23 @@ def build_group_stats(codes_list):
   total_count = len(df)
   group_summary = (
       df.groupby("族群")
-      .agg(個股數=("代號", "count"), 總成交值億=("成交值(億)", "sum"))
+      .agg(
+          個股數=("代號", "count"),
+          總成交值億=("成交值(億)", "sum"),
+          平均雙法人集中度=("雙法人買超占比(%)", "mean"),
+      )
       .reset_index()
   )
   group_summary["占比(%)"] = round(
       (group_summary["個股數"] / total_count) * 100, 2
   )
+  group_summary["平均雙法人集中度"] = round(group_summary["平均雙法人集中度"], 2)
   group_summary = group_summary.sort_values(by="個股數", ascending=False)
   return df, group_summary
 
 
-df_new_up, grp_new_up = build_group_stats(newcomer_codes_up)
-df_rec_up, grp_rec_up = build_group_stats(recurring_codes_up)
+df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
+df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 
 
 def update_map_from_editor(edited_df):
@@ -270,17 +315,17 @@ def update_map_from_editor(edited_df):
 
 
 tab1, tab2, tab3 = st.tabs([
-    "🚀 百大新面孔（上漲）與族群占比",
-    "📌 百大常駐重複（上漲）族群分佈",
+    "🚀 百大新面孔（上漲）與族群占比 / 雙法人集中度",
+    "📌 百大常駐重複（上漲）族群分佈 / 雙法人集中度",
     "🔍 全市場快速查找與歸類",
 ])
 
 with tab1:
-  st.subheader("🔥 成交值百大「今日突然擠進來且上漲」的新面孔與族群占比")
+  st.subheader("🔥 成交值百大「今日突然擠進來且上漲」的新面孔與籌碼集中度")
   if not grp_new_up.empty:
-    c1, c2 = st.columns([1, 1])
+    c1, c2 = st.columns([1, 1.2])
     with c1:
-      st.markdown("### 📊 新面孔族群占比統計")
+      st.markdown("### 📊 新面孔族群占比與平均集中度")
       st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
     with c2:
       st.markdown(f"### 📋 符合的強勢新面孔明細 ({len(df_new_up)}檔)")
@@ -299,11 +344,11 @@ with tab1:
     st.info("今日無符合「擠入百大且收紅」的新面孔。")
 
 with tab2:
-  st.subheader("🔁 成交值百大「重複常客且今天上漲」之族群分佈")
+  st.subheader("🔁 成交值百大「重複常客且今天上漲」之族群分佈與集中度")
   if not grp_rec_up.empty:
-    c1, c2 = st.columns([1, 1])
+    c1, c2 = st.columns([1, 1.2])
     with c1:
-      st.markdown("### 📊 常客上漲族群占比統計")
+      st.markdown("### 📊 常客上漲族群占比與平均集中度")
       st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
     with c2:
       st.markdown(f"### 📋 常駐上漲個股明細 ({len(df_rec_up)}檔)")
@@ -325,12 +370,17 @@ with tab3:
   st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
   all_rows = []
   for code, info in today_dict.items():
+    inst_info = latest_inst.get(
+        code, {"外資淨買超": 0.0, "投信淨買超": 0.0, "雙法人淨買超": 0.0}
+    )
     all_rows.append({
         "代號": code,
         "官方名稱": info["官方名稱"],
         "收盤價": info["收盤價"],
         "漲跌幅(%)": info["漲跌幅(%)"],
         "成交值(億)": round(info["成交金額"] / 100000000, 2),
+        "外資買超(億)": round(inst_info["外資淨買超"] / 100000000, 3),
+        "投信買超(億)": round(inst_info["投信淨買超"] / 100000000, 3),
         "族群": st.session_state.user_industry_map.get(code, ""),
     })
   df_all = pd.DataFrame(all_rows)

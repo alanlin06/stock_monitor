@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股強勢雷達 - ChatGPT 序列模型",
+    page_title="台股強勢雷達 - 效率籌碼共振模型",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢雷達（ChatGPT 序列排序模型）")
+st.title("🎯 台股強勢雷達（量價效率差 + 雙法人共振排序）")
 
 DB_FILE = "industry_db.json"
 
@@ -55,14 +55,20 @@ search_query = st.sidebar.text_input(
 sort_metric = st.sidebar.selectbox(
     "📊 明細/族群表格排序依據",
     [
+        "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）",
         "成交值放大倍數",
+        "雙法人合佔比(%)",
         "漲跌幅(%)",
         "外本比(%)",
         "投本比(%)",
-        "雙法人合佔比(%)",
         "成交值(億)",
     ],
-    index=0,  # 預設直接依放大倍數排序 [cite: 8]
+    index=0,
+)
+
+# 篩選開關：是否嚴格要求「漲幅 <= 放大倍數」且「雙法人買超 > 0」
+strict_filter = st.sidebar.checkbox(
+    "✅ 僅顯示：漲幅 <= 放大倍數 且 雙法人合佔比 > 0", value=False
 )
 
 
@@ -258,10 +264,10 @@ def build_group_stats_with_inst(codes_list):
       amt_today = info["成交金額"]
       amt_yesterday = prev_info["成交金額"]
 
-      # Step ① 算成交值放大倍數 [cite: 8]
       multiplier = (
           round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
       )
+      pct_chg = info["漲跌幅(%)"]
 
       ind = st.session_state.user_industry_map.get(c, "未分類")
       close_p = info["收盤價"]
@@ -280,15 +286,28 @@ def build_group_stats_with_inst(codes_list):
       sitc_ratio = (sitc_shares / est_total_shares) * 100
       combined_ratio = fii_ratio + sitc_ratio
 
-      # 依照 ChatGPT 順序排列：放大倍數 -> 漲幅 -> 外本比 -> 投本比 -> 族群 [cite: 8]
+      # 核心公式：量價效率比與法人共振分數
+      # 避免分母太小或負值，若漲幅 > 0 且有效率差時給高分
+      eff_ratio_factor = (
+          multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
+      )
+      resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
+
+      # 嚴格過濾判斷：漲幅 <= 放大倍數 且 雙法人合佔比 > 0 (若開啟勾選)
+      is_qualified_efficient = (pct_chg <= multiplier) and (
+          combined_ratio > 0
+      )
+
       rows.append({
           "代號": c,
           "官方名稱": info["官方名稱"],
+          "🔥 效率籌碼共振分": resonance_score,
           "成交值放大倍數": multiplier,
-          "漲跌幅(%)": info["漲跌幅(%)"],
+          "漲跌幅(%)": pct_chg,
+          "雙法人合佔比(%)": round(combined_ratio, 3),
+          "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
           "外本比(%)": round(fii_ratio, 3),
           "投本比(%)": round(sitc_ratio, 3),
-          "雙法人合佔比(%)": round(combined_ratio, 3),
           "收盤價": close_p,
           "成交值(億)": round(amt_today / 100000000, 2),
           "外資買超(張)": round(fii_shares / 1000, 1),
@@ -299,10 +318,25 @@ def build_group_stats_with_inst(codes_list):
   if df.empty:
     return pd.DataFrame(), pd.DataFrame()
 
-  if sort_metric in df.columns:
-    df = df.sort_values(by=sort_metric, ascending=False).reset_index(
-        drop=True
-    )
+  if strict_filter:
+    df = df[df["符合量價/籌碼優選"] == "符合"].reset_index(drop=True)
+
+  # 排序對應
+  sort_col_map = {
+      "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）": (
+          "🔥 效率籌碼共振分"
+      ),
+      "成交值放大倍數": "成交值放大倍數",
+      "雙法人合佔比(%)": "雙法人合佔比(%)",
+      "漲跌幅(%)": "漲跌幅(%)",
+      "外本比(%)": "外本比(%)",
+      "投本比(%)": "投本比(%)",
+      "成交值(億)": "成交值(億)",
+  }
+  actual_sort_col = sort_col_map.get(sort_metric, "🔥 效率籌碼共振分")
+  df = df.sort_values(by=actual_sort_col, ascending=False).reset_index(
+      drop=True
+  )
 
   total_count = len(df)
   group_summary = (
@@ -310,10 +344,9 @@ def build_group_stats_with_inst(codes_list):
       .agg(
           個股數=("代號", "count"),
           總成交值億=("成交值(億)", "sum"),
+          平均共振分=("🔥 效率籌碼共振分", "mean"),
           平均放大倍數=("成交值放大倍數", "mean"),
           平均漲跌幅=("漲跌幅(%)", "mean"),
-          平均外本比=("外本比(%)", "mean"),
-          平均投本比=("投本比(%)", "mean"),
           平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
       )
       .reset_index()
@@ -321,13 +354,9 @@ def build_group_stats_with_inst(codes_list):
   group_summary["占比(%)"] = round(
       (group_summary["個股數"] / total_count) * 100, 2
   )
-  group_summary["籌碼集中分數"] = round(
-      group_summary["平均雙法人合佔比"] * np.sqrt(group_summary["個股數"]), 3
-  )
+  group_summary["平均共振分"] = round(group_summary["平均共振分"], 3)
   group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
   group_summary["平均漲跌幅"] = round(group_summary["平均漲跌幅"], 2)
-  group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
-  group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
   group_summary["平均雙法人合佔比"] = round(
       group_summary["平均雙法人合佔比"], 3
   )
@@ -336,27 +365,15 @@ def build_group_stats_with_inst(codes_list):
       "族群",
       "個股數",
       "總成交值億",
+      "平均共振分",
       "平均放大倍數",
       "平均漲跌幅",
-      "籌碼集中分數",
-      "占比(%)",
-      "平均外本比",
-      "平均投本比",
       "平均雙法人合佔比",
+      "占比(%)",
   ]
   group_summary = group_summary[[c for c in cols if c in group_summary.columns]]
-
-  metric_map = {
-      "成交值放大倍數": "平均放大倍數",
-      "漲跌幅(%)": "平均漲跌幅",
-      "外本比(%)": "平均外本比",
-      "投本比(%)": "平均投本比",
-      "雙法人合佔比(%)": "籌碼集中分數",
-      "成交值(億)": "總成交值億",
-  }
-  target_grp_col = metric_map.get(sort_metric, "平均放大倍數")
   group_summary = group_summary.sort_values(
-      by=target_grp_col, ascending=False
+      by="平均共振分", ascending=False
   ).reset_index(drop=True)
 
   return df, group_summary
@@ -385,7 +402,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-  st.subheader("🚀 新進榜強勢股（放大倍數 ➔ 漲幅 ➔ 外本/投本比）")
+  st.subheader("🚀 新進榜強勢股（效率共振排序）")
   if not grp_new_up.empty:
     c1, c2 = st.columns([1.1, 1.4])
     with c1:
@@ -440,34 +457,33 @@ with tab3:
     multiplier = (
         round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
     )
+    pct_chg = info["漲跌幅(%)"]
     inst_info = latest_inst.get(
         code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0}
     )
     est_total_shares = (
         (amt_today / info["收盤價"]) * 15 if info["收盤價"] > 0 else 1e7
     )
+    fii_ratio = (inst_info["外資淨買超股數"] / est_total_shares) * 100
+    sitc_ratio = (inst_info["投信淨買超股數"] / est_total_shares) * 100
+    combined_ratio = fii_ratio + sitc_ratio
+    eff_ratio_factor = (
+        multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
+    )
+    resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
+
     all_rows.append({
         "代號": code,
         "官方名稱": info["官方名稱"],
+        "🔥 效率籌碼共振分": resonance_score,
         "成交值放大倍數": multiplier,
-        "漲跌幅(%)": info["漲跌幅(%)"],
-        "外本比(%)": round(
-            (inst_info["外資淨買超股數"] / est_total_shares) * 100, 3
+        "漲跌幅(%)": pct_chg,
+        "雙法人合佔比(%)": round(combined_ratio, 3),
+        "符合量價/籌碼優選": (
+            "符合" if (pct_chg <= multiplier) and (combined_ratio > 0) else "一般"
         ),
-        "投本比(%)": round(
-            (inst_info["投信淨買超股數"] / est_total_shares) * 100, 3
-        ),
-        "雙法人合佔比(%)": round(
-            (
-                (
-                    inst_info["外資淨買超股數"]
-                    + inst_info["投信淨買超股數"]
-                )
-                / est_total_shares
-            )
-            * 100,
-            3,
-        ),
+        "外本比(%)": round(fii_ratio, 3),
+        "投本比(%)": round(sitc_ratio, 3),
         "收盤價": info["收盤價"],
         "成交值(億)": round(amt_today / 100000000, 2),
         "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
@@ -475,6 +491,8 @@ with tab3:
         "族群": st.session_state.user_industry_map.get(code, ""),
     })
   df_all = pd.DataFrame(all_rows)
+  if strict_filter:
+    df_all = df_all[df_all["符合量價/籌碼優選"] == "符合"].reset_index(drop=True)
   if search_query:
     df_all = df_all[
         df_all["代號"].str.contains(search_query)

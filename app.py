@@ -490,26 +490,16 @@ if market_dict:
     df_top100 = enrich_data(df_v_100)
     df_top100.insert(0, "排名", range(1, len(df_top100) + 1))
 
-    # ==================== 三方交集 + 漲跌幅 > 0 市場共識 ====================
-    df_f_up_pool = df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0]
-    df_t_up_pool = df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0]
-    df_v_up_pool = df_top100[df_top100["漲跌幅(%)"] > 0]
+    # ==================== 篩選池與基本面過濾 ====================
+    df_f_up_pool = df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0].copy()
+    df_t_up_pool = df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0].copy()
+    df_v_up_pool = df_top100[df_top100["漲跌幅(%)"] > 0].copy()
 
-    common_codes = (
+    # 族群擴散篩選池：三方重疊 且 上漲 且 集中度>0
+    common_codes_spread = (
         set(df_f_up_pool["代號"])
         .intersection(set(df_t_up_pool["代號"]))
         .intersection(set(df_v_up_pool["代號"]))
-    )
-
-    df_cross = df_top100[df_top100["代號"].isin(common_codes)].copy()
-
-    # ==================== 族群擴散篩選池：三方重疊 且 上漲 且 集中度>0 ====================
-    common_codes_spread = (
-        set(df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0]["代號"])
-        .intersection(
-            set(df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0]["代號"])
-        )
-        .intersection(set(df_top100[df_top100["漲跌幅(%)"] > 0]["代號"]))
     )
 
     df_spread_pool = df_top100[
@@ -518,28 +508,45 @@ if market_dict:
         & (df_top100["雙法人總集中度(%)"] > 0)
     ].copy()
 
-    # 💡 針對市場共識與族群擴散套用營益率過濾與篩選
     if enable_profit_filter:
-      df_cross = df_cross[
-          (df_cross["本季營益率(%)"] > 0)
-          & (df_cross["本季營益率(%)"] > df_cross["上一季營益率(%)"])
+      df_f_up_pool = df_f_up_pool[
+          (df_f_up_pool["本季營益率(%)"] > 0)
+          & (df_f_up_pool["本季營益率(%)"] > df_f_up_pool["上一季營益率(%)"])
+      ]
+      df_t_up_pool = df_t_up_pool[
+          (df_t_up_pool["本季營益率(%)"] > 0)
+          & (df_t_up_pool["本季營益率(%)"] > df_t_up_pool["上一季營益率(%)"])
+      ]
+      df_v_up_pool = df_v_up_pool[
+          (df_v_up_pool["本季營益率(%)"] > 0)
+          & (df_v_up_pool["本季營益率(%)"] > df_v_up_pool["上一季營益率(%)"])
       ]
       df_spread_pool = df_spread_pool[
           (df_spread_pool["本季營益率(%)"] > 0)
           & (df_spread_pool["本季營益率(%)"] > df_spread_pool["上一季營益率(%)"])
       ]
 
-    df_cross = df_cross.sort_values(by="雙法人總集中度(%)", ascending=False)
-    if "排序" in df_cross.columns:
-      df_cross = df_cross.drop(columns=["排序"])
-    df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
-
-    # ==================== 族群平均集中度統計 ====================
-    df_grouped_raw = df_spread_pool[df_spread_pool["族群"].str.strip() != ""]
-
-    if not df_grouped_raw.empty:
-      df_industry_summary = (
-          df_grouped_raw.groupby("族群")
+    # 通用函式：將指定的強勢股池依族群聚合打分數
+    def build_industry_ranking(df_pool):
+      raw = df_pool[df_pool["族群"].str.strip() != ""]
+      if raw.empty:
+        return pd.DataFrame(
+            columns=[
+                "排名",
+                "族群",
+                "股票檔數",
+                "籌碼集中度",
+                "平均外本比(%)",
+                "平均投本比(%)",
+                "平均雙法人總集中度(%)",
+                "外資總買超張數",
+                "投信總買超張數",
+                "平均連續買超天數",
+                "族群總成交值",
+            ]
+        )
+      summary = (
+          raw.groupby("族群")
           .agg(
               股票檔數=("代號", "count"),
               平均外本比_pct=("外本比(%)", "mean"),
@@ -552,47 +559,31 @@ if market_dict:
           )
           .reset_index()
       )
-
-      df_industry_summary["平均外本比_pct"] = df_industry_summary[
-          "平均外本比_pct"
-      ].round(3)
-      df_industry_summary["平均投本比_pct"] = df_industry_summary[
-          "平均投本比_pct"
-      ].round(3)
-      df_industry_summary["平均雙法人總集中度_pct"] = df_industry_summary[
+      summary["平均外本比_pct"] = summary["平均外本比_pct"].round(3)
+      summary["平均投本比_pct"] = summary["平均投本比_pct"].round(3)
+      summary["平均雙法人總集中度_pct"] = summary[
           "平均雙法人總集中度_pct"
       ].round(3)
-      df_industry_summary["外資總買超張數"] = df_industry_summary[
-          "外資總買超張數"
-      ].round(0)
-      df_industry_summary["投信總買超張數"] = df_industry_summary[
-          "投信總買超張數"
-      ].round(0)
-      df_industry_summary["平均連續買超天數"] = df_industry_summary[
-          "平均連續買超天數"
-      ].round(1)
+      summary["外資總買超張數"] = summary["外資總買超張數"].round(0)
+      summary["投信總買超張數"] = summary["投信總買超張數"].round(0)
+      summary["平均連續買超天數"] = summary["平均連續買超天數"].round(1)
 
-      df_industry_summary = df_industry_summary.rename(
+      summary = summary.rename(
           columns={
               "平均外本比_pct": "平均外本比(%)",
               "平均投本比_pct": "平均投本比(%)",
               "平均雙法人總集中度_pct": "平均雙法人總集中度(%)",
           }
       )
-
-      df_industry_summary["籌碼集中度"] = round(
-          df_industry_summary["平均雙法人總集中度(%)"]
-          * np.sqrt(df_industry_summary["股票檔數"])
-          * np.log1p(df_industry_summary["外資總買超張數"].clip(lower=0))
-          * np.log1p(df_industry_summary["投信總買超張數"].clip(lower=0))
-          * (1 + 0.1 * df_industry_summary["平均連續買超天數"].clip(lower=0)),
+      summary["籌碼集中度"] = round(
+          summary["平均雙法人總集中度(%)"]
+          * np.sqrt(summary["股票檔數"])
+          * np.log1p(summary["外資總買超張數"].clip(lower=0))
+          * np.log1p(summary["投信總買超張數"].clip(lower=0))
+          * (1 + 0.1 * summary["平均連續買超天數"].clip(lower=0)),
           2,
       )
-
-      df_industry_summary = df_industry_summary.sort_values(
-          by="籌碼集中度", ascending=False
-      )
-
+      summary = summary.sort_values(by="籌碼集中度", ascending=False)
       cols_order = [
           "族群",
           "股票檔數",
@@ -605,28 +596,14 @@ if market_dict:
           "平均連續買超天數",
           "族群總成交值",
       ]
-      df_industry_summary = df_industry_summary[
-          [c for c in cols_order if c in df_industry_summary.columns]
-      ]
-      df_industry_summary.insert(
-          0, "排名", range(1, len(df_industry_summary) + 1)
-      )
-    else:
-      df_industry_summary = pd.DataFrame(
-          columns=[
-              "排名",
-              "族群",
-              "股票檔數",
-              "籌碼集中度",
-              "平均外本比(%)",
-              "平均投本比(%)",
-              "平均雙法人總集中度(%)",
-              "外資總買超張數",
-              "投信總買超張數",
-              "平均連續買超天數",
-              "族群總成交值",
-          ]
-      )
+      summary = summary[[c for c in cols_order if c in summary.columns]]
+      summary.insert(0, "排名", range(1, len(summary) + 1))
+      return summary
+
+    df_ind_spread = build_industry_ranking(df_spread_pool)
+    df_ind_foreign = build_industry_ranking(df_f_up_pool)
+    df_ind_trust = build_industry_ranking(df_t_up_pool)
+    df_ind_volume = build_industry_ranking(df_v_up_pool)
 
     # ==================== 搜尋與過濾面板 ====================
     st.markdown("### 🔍 任意台股快速查找與篩選")
@@ -652,17 +629,23 @@ if market_dict:
       st.markdown("---")
 
     # ==================== 分頁顯示排行榜與編輯 ====================
-    tab_ind_summary, tab_cross, tab_top100_f, tab_top100_t, tab_top100_v = (
-        st.tabs(
-            [
-                "族群擴散",
-                "市場共識",
-                "外資買賣超 Top 100",
-                "投信買賣超 Top 100",
-                "成交值 Top 100",
-            ]
-        )
-    )
+    (
+        tab_spread,
+        tab_ind_f,
+        tab_ind_t,
+        tab_ind_v,
+        tab_top100_f,
+        tab_top100_t,
+        tab_top100_v,
+    ) = st.tabs([
+        "🌊 族群擴散",
+        "🌐 外資強勢族群",
+        "🎯 投信強勢族群",
+        "💰 成交值強勢族群",
+        "外資買賣超 Top 100",
+        "投信買賣超 Top 100",
+        "成交值 Top 100",
+    ])
 
     def update_map_from_editor(edited_df):
       if (
@@ -681,38 +664,28 @@ if market_dict:
             "✅ 族群設定已成功同步並儲存至本地資料庫！(請重整或切換頁面套用)"
         )
 
-    with tab_ind_summary:
-      if not df_industry_summary.empty:
-        df_industry_summary.insert(0, "查看", False)
-        st.info(
-            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開三方重疊強勢股！"
-        )
+    def render_industry_tab_with_drilldown(df_summary, pool_df, tab_key_prefix):
+      if not df_summary.empty:
+        df_summary_disp = df_summary.copy()
+        df_summary_disp.insert(0, "查看", False)
+        st.info("💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾即可展開個股明細！")
 
-        edited_industry_summary = st.data_editor(
-            df_industry_summary,
+        edited_sum = st.data_editor(
+            df_summary_disp,
             use_container_width=True,
             hide_index=True,
-            height=400,
-            disabled=[
-                c for c in df_industry_summary.columns if c != "查看"
-            ],
-            key="editor_industry_checkbox",
+            height=350,
+            disabled=[c for c in df_summary_disp.columns if c != "查看"],
+            key=f"editor_check_{tab_key_prefix}",
         )
 
-        selected_rows = edited_industry_summary[
-            edited_industry_summary["查看"] == True
-        ]
-
+        selected_rows = edited_sum[edited_sum["查看"] == True]
         if not selected_rows.empty:
           st.markdown("---")
           st.markdown("### 🏆 已勾選族群內入選的強勢股 (可直接編輯個股族群)")
-
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
-            df_ind_stocks = df_spread_pool[
-                df_spread_pool["族群"] == target_ind
-            ].copy()
-
+            df_ind_stocks = pool_df[pool_df["族群"] == target_ind].copy()
             if not df_ind_stocks.empty:
               df_ind_stocks = df_ind_stocks.sort_values(
                   by="雙法人總集中度(%)", ascending=False
@@ -722,7 +695,6 @@ if market_dict:
               df_ind_stocks.insert(
                   0, "族群排名", range(1, len(df_ind_stocks) + 1)
               )
-
               st.subheader(f"📌 {target_ind} (共 {len(df_ind_stocks)} 檔)")
               edited_sub = st.data_editor(
                   df_ind_stocks,
@@ -733,33 +705,32 @@ if market_dict:
                       for c in df_ind_stocks.columns
                       if c != "族群" and c != "族群排名"
                   ],
-                  key=f"editor_sub_{target_ind}",
+                  key=f"sub_ed_{tab_key_prefix}_{target_ind}",
               )
               if st.button(
-                  f"💾 儲存 {target_ind} 變更", key=f"btn_save_sub_{target_ind}"
+                  f"💾 儲存 {target_ind} 變更",
+                  key=f"btn_sub_{tab_key_prefix}_{target_ind}",
               ):
                 update_map_from_editor(edited_sub)
-            else:
-              st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
       else:
-        st.warning(
-            "⚠️ 目前沒有同時符合【三方重疊+漲幅>0+集中度>0】與【營益率過濾】的資料。"
-        )
+        st.warning("⚠️ 查無符合條件的族群資料。")
 
-    with tab_cross:
-      st.info(
-          "🎯 **市場共識**：直接編輯【族群】欄位後點擊下方按鈕儲存。"
+    with tab_spread:
+      render_industry_tab_with_drilldown(
+          df_ind_spread, df_spread_pool, "spread"
       )
-      edited_df_cross = st.data_editor(
-          df_cross,
-          use_container_width=True,
-          hide_index=True,
-          height=500,
-          disabled=[col for col in df_cross.columns if col != "族群"],
-          key="editor_cross_all",
-      )
-      if st.button("💾 儲存市場共識分頁的族群設定", key="btn_save_cross_all"):
-        update_map_from_editor(edited_df_cross)
+
+    with tab_ind_f:
+      st.info("🌐 **外資強勢族群（外資Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      render_industry_tab_with_drilldown(df_ind_foreign, df_f_up_pool, "ind_f")
+
+    with tab_ind_t:
+      st.info("🎯 **投信強勢族群（投信Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      render_industry_tab_with_drilldown(df_ind_trust, df_t_up_pool, "ind_t")
+
+    with tab_ind_v:
+      st.info("💰 **成交值強勢族群（成交值Top100 ∩ 上漲 ∩ 營益率過濾）**")
+      render_industry_tab_with_drilldown(df_ind_volume, df_v_up_pool, "ind_v")
 
     with tab_top100_f:
       st.info("💡 **外資買賣超 Top 100**：可直接修改【族群】欄位")

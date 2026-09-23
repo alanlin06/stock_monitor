@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股強勢雷達 - 雙法人Top100族群集中度",
+    page_title="台股強勢策略",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢雷達（個股效率 + 雙法人 Top100 族群集中度）")
+st.title("🎯 台股強勢策略")
 
 DB_FILE = "industry_db.json"
 
@@ -381,7 +381,7 @@ df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 
 
 # ---------------------------------------------------------
-# 新增功能：外資 Top100 / 投信 Top100 族群集中度比較
+# 雙法人 Top100 / 交集族群集中度比較
 # ---------------------------------------------------------
 def build_top100_institutional_concentration():
   fii_sorted = sorted(
@@ -404,7 +404,7 @@ def build_top100_institutional_concentration():
       reverse=True,
   )[:100]
 
-  def process_inst_top100(lst, type_name):
+  def process_inst_top100(lst):
     rows = []
     for code, shrs in lst:
       info = today_dict.get(code, {})
@@ -422,6 +422,7 @@ def build_top100_institutional_concentration():
           "買超張數": round(shrs / 1000, 1),
           "本比(%)": round(ratio, 3),
           "族群": ind,
+          "Raw_shrs": shrs,
       })
     df_temp = pd.DataFrame(rows)
     if df_temp.empty:
@@ -443,9 +444,57 @@ def build_top100_institutional_concentration():
     )
     return df_temp, grp
 
-  df_fii_top, grp_fii_top = process_inst_top100(fii_sorted, "外資Top100")
-  df_sitc_top, grp_sitc_top = process_inst_top100(sitc_sorted, "投信Top100")
-  return df_fii_top, grp_fii_top, df_sitc_top, grp_sitc_top
+  df_fii_top, grp_fii_top = process_inst_top100(fii_sorted)
+  df_sitc_top, grp_sitc_top = process_inst_top100(sitc_sorted)
+
+  if not df_fii_top.empty and not df_sitc_top.empty:
+    common_industries = set(df_fii_top["族群"]).intersection(
+        set(df_sitc_top["族群"])
+    )
+    common_industries.discard("未分類")
+
+    overlap_rows = []
+    for ind in common_industries:
+      sub_fii = df_fii_top[df_fii_top["族群"] == ind]
+      sub_sitc = df_sitc_top[df_sitc_top["族群"] == ind]
+
+      fii_cnt = len(sub_fii)
+      sitc_cnt = len(sub_sitc)
+      fii_sum_shrs = sub_fii["買超張數"].sum()
+      sitc_sum_shrs = sub_sitc["買超張數"].sum()
+      fii_avg_ratio = sub_fii["本比(%)"].mean()
+      sitc_avg_ratio = sub_sitc["本比(%)"].mean()
+
+      overlap_rows.append({
+          "重複族群": ind,
+          "外資Top100家數": fii_cnt,
+          "外資買超張數": round(fii_sum_shrs, 1),
+          "投信Top100家數": sitc_cnt,
+          "投信買超張數": round(sitc_sum_shrs, 1),
+          "雙法人合計買超(張)": round(fii_sum_shrs + sitc_sum_shrs, 1),
+          "綜合集中強度": round(
+              (fii_avg_ratio + sitc_avg_ratio)
+              * np.sqrt(fii_cnt + sitc_cnt),
+              3,
+          ),
+      })
+    df_overlap = pd.DataFrame(overlap_rows)
+    if not df_overlap.empty:
+      df_overlap = df_overlap.sort_values(
+          by="雙法人合計買超(張)", ascending=False
+      ).reset_index(drop=True)
+    else:
+      df_overlap = pd.DataFrame()
+  else:
+    df_overlap = pd.DataFrame()
+
+  return (
+      df_fii_top,
+      grp_fii_top,
+      df_sitc_top,
+      grp_sitc_top,
+      df_overlap,
+  )
 
 
 (
@@ -453,6 +502,7 @@ def build_top100_institutional_concentration():
     grp_fii_top100,
     df_sitc_top100,
     grp_sitc_top100,
+    df_overlap_top100,
 ) = build_top100_institutional_concentration()
 
 
@@ -469,10 +519,10 @@ def update_map_from_editor(edited_df):
 
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "🚀 新進榜強勢股",
-    "📌 持續中強勢股",
-    "🏛️ 雙法人 Top100 族群集中度比較",
-    "🔍 全市場快速查找與歸類",
+    "新進榜強勢股",
+    "持續中強勢股",
+    "雙法人Top100族群集中度比較",
+    "全市場快速查找與歸類",
 ])
 
 with tab1:
@@ -538,6 +588,13 @@ with tab3:
       st.dataframe(
           df_sitc_top100, use_container_width=True, hide_index=True
       )
+
+  st.markdown("---")
+  st.subheader("🔥 雙法人重複族群集中度重算")
+  if not df_overlap_top100.empty:
+    st.dataframe(df_overlap_top100, use_container_width=True, hide_index=True)
+  else:
+    st.info("目前外資與投信 Top100 名單中無高度重疊之同一族群。")
 
 with tab4:
   st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")

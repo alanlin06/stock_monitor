@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股強勢雷達 - 效率籌碼共振模型",
+    page_title="台股強勢雷達 - 雙法人Top100族群集中度",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢雷達（量價效率差 + 雙法人共振排序）")
+st.title("🎯 台股強勢雷達（個股效率 + 雙法人 Top100 族群集中度）")
 
 DB_FILE = "industry_db.json"
 
@@ -66,7 +66,6 @@ sort_metric = st.sidebar.selectbox(
     index=0,
 )
 
-# 篩選開關：是否嚴格要求「漲幅 <= 放大倍數」且「雙法人買超 > 0」
 strict_filter = st.sidebar.checkbox(
     "✅ 僅顯示：漲幅 <= 放大倍數 且 雙法人合佔比 > 0", value=False
 )
@@ -124,11 +123,13 @@ def fetch_top100_data():
           for row in d["data"]:
             if len(row) > 10:
               code = str(row[0]).strip()
+              name = str(row[1]).strip()
               if len(code) == 4 and code.isdigit():
                 try:
                   f_val = float(str(row[4]).replace(",", ""))
                   t_val = float(str(row[10]).replace(",", ""))
                   t_map[code] = {
+                      "官方名稱": name,
                       "外資淨買超股數": f_val,
                       "投信淨買超股數": t_val,
                   }
@@ -286,14 +287,11 @@ def build_group_stats_with_inst(codes_list):
       sitc_ratio = (sitc_shares / est_total_shares) * 100
       combined_ratio = fii_ratio + sitc_ratio
 
-      # 核心公式：量價效率比與法人共振分數
-      # 避免分母太小或負值，若漲幅 > 0 且有效率差時給高分
       eff_ratio_factor = (
           multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
       )
       resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
 
-      # 嚴格過濾判斷：漲幅 <= 放大倍數 且 雙法人合佔比 > 0 (若開啟勾選)
       is_qualified_efficient = (pct_chg <= multiplier) and (
           combined_ratio > 0
       )
@@ -321,7 +319,6 @@ def build_group_stats_with_inst(codes_list):
   if strict_filter:
     df = df[df["符合量價/籌碼優選"] == "符合"].reset_index(drop=True)
 
-  # 排序對應
   sort_col_map = {
       "🔥 效率籌碼共振分（推薦：倍數大+漲幅低+雙法人）": (
           "🔥 效率籌碼共振分"
@@ -367,8 +364,7 @@ def build_group_stats_with_inst(codes_list):
       "總成交值億",
       "平均共振分",
       "平均放大倍數",
-      "平均漲跌幅",
-      "平均雙法人合佔比",
+      > average_pct / average_combined,
       "占比(%)",
   ]
   group_summary = group_summary[[c for c in cols if c in group_summary.columns]]
@@ -383,6 +379,86 @@ df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
 df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 
 
+# ---------------------------------------------------------
+# 新增功能：外資 Top100 / 投信 Top100 族群集中度比較
+# ---------------------------------------------------------
+def build_top100_institutional_concentration():
+  # 抓出外資買超前 100 名
+  fii_sorted = sorted(
+      [
+          (code, d["外資淨買超股數"])
+          for code, d in latest_inst.items()
+          if d["外資淨買超股數"] > 0
+      ],
+      key=lambda x: x[1],
+      reverse=True,
+  )[:100]
+
+  # 抓出投信買超前 100 名
+  sitc_sorted = sorted(
+      [
+          (code, d["投信淨買超股數"])
+          for code, d in latest_inst.items()
+          if d["投信淨買超股數"] > 0
+      ],
+      key=lambda x: x[1],
+      reverse=True,
+  )[:100]
+
+  def process_inst_top100(lst, type_name):
+    rows = []
+    for code, shrs in lst:
+      info = today_dict.get(code, {})
+      name = info.get("官方名稱", latest_inst.get(code, {}).get("官方名稱", code))
+      close_p = info.get("收盤價", 100.0)
+      amt_today = info.get("成交金額", close_p * shrs)
+      est_total_shares = (
+          (amt_today / close_p) * 15 if close_p > 0 else 1e7
+      )
+      ratio = (shrs / est_total_shares) * 100
+      ind = st.session_state.user_industry_map.get(code, "未分類")
+      rows.append({
+          "代號": code,
+          "官方名稱": name,
+          "買超張數": round(shrs / 1000, 1),
+          "本比(%)": round(ratio, 3),
+          "族群": ind,
+      })
+    df_temp = pd.DataFrame(rows)
+    if df_temp.empty:
+      return pd.DataFrame(), pd.DataFrame()
+
+    grp = (
+        df_temp.groupby("族群")
+        .agg(
+            家數=("代號", "count"),
+            總買超張數=("買超張數", "sum"),
+            平均本比=("本比(%)", "mean"),
+        )
+        .reset_index()
+    )
+    grp["平均本比"] = round(grp["平均本比"], 3)
+    grp["籌碼集中強度"] = round(
+        grp["平均本比"] * np.sqrt(grp["家數"]), 3
+    )
+    grp = grp.sort_values(by="總買超張數", ascending=False).reset_index(
+        drop=True
+    )
+    return df_temp, grp
+
+  df_fii_top, grp_fii_top = process_inst_top100(fii_sorted, "外資Top100")
+  df_sitc_top, grp_sitc_top = process_inst_top100(sitc_sorted, "投信Top100")
+  return df_fii_top, grp_fii_top, df_sitc_top, grp_sitc_top
+
+
+(
+    df_fii_top100,
+    grp_fii_top100,
+    df_sitc_top100,
+    grp_sitc_top100,
+) = build_top100_institutional_concentration()
+
+
 def update_map_from_editor(edited_df):
   if not edited_df.empty and "代號" in edited_df.columns and "族群" in edited_df.columns:
     updated_map = st.session_state.user_industry_map.copy()
@@ -395,9 +471,10 @@ def update_map_from_editor(edited_df):
     st.success("✅ 族群設定已成功更新！")
 
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🚀 新進榜強勢股",
     "📌 持續中強勢股",
+    "🏛️ 雙法人 Top100 族群集中度比較",
     "🔍 全市場快速查找與歸類",
 ])
 
@@ -448,6 +525,24 @@ with tab2:
     st.info("目前無符合條件的持續中標的。")
 
 with tab3:
+  st.subheader("🏛️ 外資買超 Top100 vs 投信買超 Top100 族群籌碼集中度比較")
+  col_f, col_s = st.columns(2)
+  with col_f:
+    st.markdown("### 🌐 外資 Top100 族群集中度")
+    st.dataframe(grp_fii_top100, use_container_width=True, hide_index=True)
+    with st.expander("查看外資 Top100 個股明細"):
+      st.dataframe(
+          df_fii_top100, use_container_width=True, hide_index=True
+      )
+  with col_s:
+    st.markdown("### 🎯 投信 Top100 族群集中度")
+    st.dataframe(grp_sitc_top100, use_container_width=True, hide_index=True)
+    with st.expander("查看投信 Top100 個股明細"):
+      st.dataframe(
+          df_sitc_top100, use_container_width=True, hide_index=True
+      )
+
+with tab4:
   st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
   all_rows = []
   for code, info in today_dict.items():

@@ -52,7 +52,6 @@ search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股", placeholder="輸入代號或名稱 (例: 2330)"
 )
 
-# 排序依據選擇側邊欄設定（移除升冪排序）
 sort_metric = st.sidebar.selectbox(
     "📊 明細/族群表格排序依據",
     ["外本比(%)", "投本比(%)", "雙法人合佔比(%)", "漲跌幅(%)", "成交值(億)"],
@@ -114,8 +113,8 @@ def fetch_top100_data():
               code = str(row[0]).strip()
               if len(code) == 4 and code.isdigit():
                 try:
-                  f_val = float(str(row[4]).replace(",", ""))  # 外資淨買超(股)
-                  t_val = float(str(row[10]).replace(",", ""))  # 投信淨買超(股)
+                  f_val = float(str(row[4]).replace(",", ""))
+                  t_val = float(str(row[10]).replace(",", ""))
                   t_map[code] = {
                       "外資淨買超股數": f_val,
                       "投信淨買超股數": t_val,
@@ -354,12 +353,10 @@ with tab1:
   if not grp_new_up.empty:
     c1, c2 = st.columns([1, 1.3])
     with c1:
-      st.markdown(
-          f"### 📊 新面孔族群占比與依 {sort_metric} 排序彙總"
-      )
+      st.markdown("### 📊 族群分布")
       st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
     with c2:
-      st.markdown(f"### 📋 符合的強勢新面孔明細 ({len(df_new_up)}檔)")
+      st.markdown(f"### 📋 強勢股分布 ({len(df_new_up)}檔)")
       ed_new = st.data_editor(
           df_new_up,
           use_container_width=True,
@@ -382,12 +379,10 @@ with tab2:
   if not grp_rec_up.empty:
     c1, c2 = st.columns([1, 1.3])
     with c1:
-      st.markdown(
-          f"### 📊 常客上漲族群占比與依 {sort_metric} 排序彙總"
-      )
+      st.markdown("### 📊 族群分布")
       st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
     with c2:
-      st.markdown(f"### 📋 常駐上漲個股明細 ({len(df_rec_up)}檔)")
+      st.markdown(f"### 📋 強勢股分布 ({len(df_rec_up)}檔)")
       ed_rec = st.data_editor(
           df_rec_up,
           use_container_width=True,

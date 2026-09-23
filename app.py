@@ -503,8 +503,20 @@ if market_dict:
 
     df_cross = df_top100[df_top100["代號"].isin(common_codes)].copy()
 
-    # ==================== 族群擴散篩選池：僅用 成交值前100大 且 漲跌幅 > 0 ====================
-    df_spread_pool = df_top100[df_top100["漲跌幅(%)"] > 0].copy()
+    # ==================== 族群擴散篩選池：三方重疊 且 上漲 且 集中度>0 ====================
+    common_codes_spread = (
+        set(df_top100_foreign[df_top100_foreign["漲跌幅(%)"] > 0]["代號"])
+        .intersection(
+            set(df_top100_trust[df_top100_trust["漲跌幅(%)"] > 0]["代號"])
+        )
+        .intersection(set(df_top100[df_top100["漲跌幅(%)"] > 0]["代號"]))
+    )
+
+    df_spread_pool = df_top100[
+        df_top100["代號"].isin(common_codes_spread)
+        & (df_top100["漲跌幅(%)"] > 0)
+        & (df_top100["雙法人總集中度(%)"] > 0)
+    ].copy()
 
     # 💡 針對市場共識與族群擴散套用營益率過濾與篩選
     if enable_profit_filter:
@@ -522,7 +534,7 @@ if market_dict:
       df_cross = df_cross.drop(columns=["排序"])
     df_cross.insert(0, "排序", range(1, len(df_cross) + 1))
 
-    # ==================== 族群平均集中度統計 (基於成交值前100強勢篩選池：族群擴散) ====================
+    # ==================== 族群平均集中度統計 ====================
     df_grouped_raw = df_spread_pool[df_spread_pool["族群"].str.strip() != ""]
 
     if not df_grouped_raw.empty:
@@ -673,7 +685,7 @@ if market_dict:
       if not df_industry_summary.empty:
         df_industry_summary.insert(0, "查看", False)
         st.info(
-            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開該族群在【成交值 Top 100 且上漲】名單中的股票！"
+            "💡 **操作提示**：在下方族群前面的 **[查看]** 欄位打勾，即可在下方展開三方重疊強勢股！"
         )
 
         edited_industry_summary = st.data_editor(
@@ -693,9 +705,7 @@ if market_dict:
 
         if not selected_rows.empty:
           st.markdown("---")
-          st.markdown(
-              "### 🏆 已勾選族群內入選的強勢股 (可直接編輯個股族群)"
-          )
+          st.markdown("### 🏆 已勾選族群內入選的強勢股 (可直接編輯個股族群)")
 
           for _, ind_row in selected_rows.iterrows():
             target_ind = ind_row["族群"]
@@ -733,7 +743,7 @@ if market_dict:
               st.warning(f"「{target_ind}」族群底下暫無符合條件的股票資料。")
       else:
         st.warning(
-            "⚠️ 目前沒有同時符合【成交值Top100且漲】與【營益率過濾】的資料。"
+            "⚠️ 目前沒有同時符合【三方重疊+漲幅>0+集中度>0】與【營益率過濾】的資料。"
         )
 
     with tab_cross:

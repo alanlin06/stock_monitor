@@ -8,12 +8,12 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="台股強勢雷達",
+    page_title="台股強勢雷達 - 蓄勢新兵模型",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢雷達")
+st.title("🎯 台股強勢雷達（蓄勢放大倍數模型）")
 
 DB_FILE = "industry_db.json"
 
@@ -54,8 +54,15 @@ search_query = st.sidebar.text_input(
 
 sort_metric = st.sidebar.selectbox(
     "📊 明細/族群表格排序依據",
-    ["外本比(%)", "投本比(%)", "雙法人合佔比(%)", "漲跌幅(%)", "成交值(億)"],
-    index=2,
+    [
+        "成交值放大倍數",
+        "外本比(%)",
+        "投本比(%)",
+        "雙法人合佔比(%)",
+        "漲跌幅(%)",
+        "成交值(億)",
+    ],
+    index=0,
 )
 
 
@@ -247,8 +254,17 @@ def build_group_stats_with_inst(codes_list):
   for c in codes_list:
     if c in today_dict:
       info = today_dict[c]
+      prev_info = prev_dict.get(c, {"成交金額": 0.0})
+      amt_today = info["成交金額"]
+      amt_yesterday = prev_info["成交金額"]
+
+      # 計算成交值放大倍數 (防呆除以 0 或極小值)
+      if amt_yesterday > 0:
+        multiplier = round(amt_today / amt_yesterday, 2)
+      else:
+        multiplier = 0.0
+
       ind = st.session_state.user_industry_map.get(c, "未分類")
-      turnover_amt = info["成交金額"]
       close_p = info["收盤價"]
 
       inst_info = latest_inst.get(
@@ -258,7 +274,7 @@ def build_group_stats_with_inst(codes_list):
       sitc_shares = inst_info["投信淨買超股數"]
 
       est_total_shares = (
-          (turnover_amt / close_p) * 15 if close_p > 0 else 1e7
+          (amt_today / close_p) * 15 if close_p > 0 else 1e7
       )
 
       fii_ratio = (fii_shares / est_total_shares) * 100
@@ -270,7 +286,8 @@ def build_group_stats_with_inst(codes_list):
           "官方名稱": info["官方名稱"],
           "收盤價": close_p,
           "漲跌幅(%)": info["漲跌幅(%)"],
-          "成交值(億)": round(turnover_amt / 100000000, 2),
+          "成交值(億)": round(amt_today / 100000000, 2),
+          "成交值放大倍數": multiplier,
           "外資買超(張)": round(fii_shares / 1000, 1),
           "投信買超(張)": round(sitc_shares / 1000, 1),
           "外本比(%)": round(fii_ratio, 3),
@@ -293,6 +310,7 @@ def build_group_stats_with_inst(codes_list):
       .agg(
           個股數=("代號", "count"),
           總成交值億=("成交值(億)", "sum"),
+          平均放大倍數=("成交值放大倍數", "mean"),
           平均外本比=("外本比(%)", "mean"),
           平均投本比=("投本比(%)", "mean"),
           平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
@@ -305,6 +323,7 @@ def build_group_stats_with_inst(codes_list):
   group_summary["籌碼集中分數"] = round(
       group_summary["平均雙法人合佔比"] * np.sqrt(group_summary["個股數"]), 3
   )
+  group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
   group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
   group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
   group_summary["平均雙法人合佔比"] = round(
@@ -315,6 +334,7 @@ def build_group_stats_with_inst(codes_list):
       "族群",
       "個股數",
       "總成交值億",
+      "平均放大倍數",
       "籌碼集中分數",
       "占比(%)",
       "平均外本比",
@@ -324,13 +344,14 @@ def build_group_stats_with_inst(codes_list):
   group_summary = group_summary[[c for c in cols if c in group_summary.columns]]
 
   metric_map = {
+      "成交值放大倍數": "平均放大倍數",
       "外本比(%)": "平均外本比",
       "投本比(%)": "平均投本比",
       "雙法人合佔比(%)": "籌碼集中分數",
       "漲跌幅(%)": "個股數",
       "成交值(億)": "總成交值億",
   }
-  target_grp_col = metric_map.get(sort_metric, "籌碼集中分數")
+  target_grp_col = metric_map.get(sort_metric, "平均放大倍數")
   group_summary = group_summary.sort_values(
       by=target_grp_col, ascending=False
   ).reset_index(drop=True)
@@ -361,9 +382,9 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-  st.subheader("🚀 新進榜強勢股")
+  st.subheader("🚀 新進榜強勢股（籌碼+蓄勢放大模型）")
   if not grp_new_up.empty:
-    c1, c2 = st.columns([1.1, 1.3])
+    c1, c2 = st.columns([1.1, 1.4])
     with c1:
       st.markdown("### 📊 族群分布")
       st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
@@ -386,7 +407,7 @@ with tab1:
 with tab2:
   st.subheader("📌 持續中強勢股")
   if not grp_rec_up.empty:
-    c1, c2 = st.columns([1.1, 1.3])
+    c1, c2 = st.columns([1.1, 1.4])
     with c1:
       st.markdown("### 📊 族群分布")
       st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
@@ -410,20 +431,25 @@ with tab3:
   st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
   all_rows = []
   for code, info in today_dict.items():
+    prev_info = prev_dict.get(code, {"成交金額": 0.0})
+    amt_today = info["成交金額"]
+    amt_yesterday = prev_info["成交金額"]
+    multiplier = (
+        round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
+    )
     inst_info = latest_inst.get(
         code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0}
     )
     est_total_shares = (
-        (info["成交金額"] / info["收盤價"]) * 15
-        if info["收盤價"] > 0
-        else 1e7
+        (amt_today / info["收盤價"]) * 15 if info["收盤價"] > 0 else 1e7
     )
     all_rows.append({
         "代號": code,
         "官方名稱": info["官方名稱"],
         "收盤價": info["收盤價"],
         "漲跌幅(%)": info["漲跌幅(%)"],
-        "成交值(億)": round(info["成交金額"] / 100000000, 2),
+        "成交值(億)": round(amt_today / 100000000, 2),
+        "成交值放大倍數": multiplier,
         "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
         "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
         "外本比(%)": round(

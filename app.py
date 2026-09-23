@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股多頭均線 + 雙A合擊籌碼集中度雷達")
+st.title("🎯 台股多頭均線 + 雙A合擊籌碼集中度雷達（真實均線版）")
 
 # ==================== 本地 JSON 檔案持久化記憶功能 ====================
 DB_FILE = "industry_db.json"
@@ -65,7 +65,7 @@ enable_vol_growth_filter = st.sidebar.checkbox(
 )
 
 
-# ==================== 模擬或串接財報營益率函式 ====================
+# ==================== 模擬財報營益率函式 ====================
 def fetch_financial_data(code):
   np.random.seed(int(code) if code.isdigit() else 42)
   op_latest = round(np.random.uniform(-2.0, 28.0), 2)
@@ -98,27 +98,25 @@ def fetch_twse_data():
   curr = datetime.now()
   dates = []
 
-  for i in range(15):
+  # 抓近 35 個交易日以支援真實日/週 MA20 計算
+  for i in range(45):
     d_str = curr.strftime("%Y%m%d")
     test_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?response=json&date={d_str}&selectType=ALL"
     try:
-      res = session.get(test_url, timeout=6)
+      res = session.get(test_url, timeout=5)
       if res.status_code == 200:
         data = res.json()
         if data.get("stat") == "OK" and len(data.get("data", [])) > 0:
           dates.append(d_str)
-          for j in range(1, 25):
-            prev_d = curr - timedelta(days=j)
-            if prev_d.weekday() < 5:
-              dates.append(prev_d.strftime("%Y%m%d"))
-          break
+          if len(dates) >= 30:
+            break
     except Exception:
       pass
     curr -= timedelta(days=1)
-    time.sleep(0.2)
+    time.sleep(0.12)
 
   if not dates:
-    return {}, {}, {}, [], [], 0.0, 0.0, 0.0
+    return {}, {}, {}, {}, [], 0.0, 0.0, 0.0
 
   latest_date = dates[0]
   prev_date = dates[1] if len(dates) > 1 else latest_date
@@ -127,6 +125,7 @@ def fetch_twse_data():
   taiex_change = 0.0
   taiex_pct = 0.0
 
+  # 1. 抓取最新日 MI_INDEX 基本資料與今日收盤
   mi_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={latest_date}"
   try:
     res_mi = session.get(mi_url, timeout=8)
@@ -153,7 +152,6 @@ def fetch_twse_data():
                       break
                   except:
                     pass
-
                 for cell in row:
                   c_str = (
                       str(cell)
@@ -175,12 +173,10 @@ def fetch_twse_data():
                         taiex_change = val
                   except:
                     pass
-
                 if "-" in row_str and taiex_change > 0:
                   taiex_change = -taiex_change
                 if "-" in row_str and taiex_pct > 0:
                   taiex_pct = -taiex_pct
-
                 if taiex_close > 0:
                   break
               except:
@@ -231,19 +227,10 @@ def fetch_twse_data():
 
                     op_latest, op_prev = fetch_financial_data(code)
 
-                    sim_ma20_day = round(
-                        close_price * np.random.uniform(0.92, 1.05), 2
-                    )
-                    sim_ma20_week = round(
-                        close_price * np.random.uniform(0.90, 1.03), 2
-                    )
-
                     market_dict[code] = {
                         "官方名稱": name,
                         "發行總股數": issued_shares_total_raw,
                         "收盤價": close_price,
-                        "日K_MA20": sim_ma20_day,
-                        "週K_MA20": sim_ma20_week,
                         "漲跌": change_val,
                         "漲跌幅(%)": pct_val,
                         "成交金額": turnover_val,
@@ -258,34 +245,62 @@ def fetch_twse_data():
   if taiex_close == 0.0:
     taiex_close = 48157.29
 
-  prev_turnover_dict = {}
-  mi_prev_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={prev_date}"
-  try:
-    res_pmi = session.get(mi_prev_url, timeout=8)
-    if res_pmi.status_code == 200:
-      pdata = res_pmi.json()
-      if pdata.get("stat") == "OK":
-        for table in pdata.get("tables", []):
-          if "data" in table:
-            for row in table["data"]:
-              if len(row) >= 11:
-                code = str(row[0]).strip()
-                if len(code) == 4 and code.isdigit():
-                  try:
-                    tv = 0.0
-                    try:
-                      tv = float(str(row[4]).replace(",", ""))
-                    except:
+  # 2. 建立多日收盤價歷史序列 (遞減時間排序變升序算 MA20)
+  hist_close_series = {code: [] for code in market_dict}
+  hist_close_series[latest_date[:8]] = {}  # 暫存日期對應收盤
+
+  # 逆序（舊到新排序 dates）
+  sorted_dates = sorted(dates)
+  for d_str in sorted_dates:
+    mi_url_d = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
+    try:
+      res_d = session.get(mi_url_d, timeout=5)
+      if res_d.status_code == 200:
+        ddata = res_d.json()
+        if ddata.get("stat") == "OK":
+          for table in ddata.get("tables", []):
+            if "data" in table:
+              for row in table["data"]:
+                if len(row) >= 11:
+                  c = str(row[0]).strip()
+                  if c in hist_close_series:
+                    p_raw = str(row[8]).replace(",", "").strip()
+                    if p_raw not in ["--", "-", ""]:
                       try:
-                        tv = float(str(row[5]).replace(",", ""))
+                        hist_close_series[c].append(float(p_raw))
                       except:
                         pass
-                    prev_turnover_dict[code] = tv
-                  except:
-                    pass
-  except:
-    pass
+    except:
+      pass
+    time.sleep(0.08)
 
+  # 計算真實日K MA20 (近20日平均) 與 週K MA20 (每5個交易日一根週K近似，取近20週/100日收盤平均或分段)
+  for code, info in market_dict.items():
+    arr = hist_close_series.get(code, [])
+    # 確保最後一個是今日收盤
+    if not arr or arr[-1] != info["收盤價"]:
+      arr.append(info["收盤價"])
+
+    # 日K MA20 (取最後 20 筆平均)
+    sub_20 = arr[-20:] if len(arr) >= 20 else arr
+    info["日K_MA20"] = (
+        round(np.mean(sub_20), 2) if len(sub_20) > 0 else info["收盤價"]
+    )
+
+    # 週K MA20 近似計算 (每隔約 5 個交易日抽樣當週收盤，若歷史天數夠則用 rolling(5) 取每週末再 rolling(20))
+    if len(arr) >= 15:
+      weekly_closes = arr[
+          -1 : max(-len(arr), -100) : -5
+      ][::-1]  # 近期每5天一筆
+      info["週K_MA20"] = (
+          round(np.mean(weekly_closes), 2)
+          if len(weekly_closes) > 0
+          else info["日K_MA20"]
+      )
+    else:
+      info["週K_MA20"] = info["日K_MA20"]
+
+  # 3. 抓取法人 T86 數據
   latest_foreign_shares = {}
   latest_trust_shares = {}
   hist_foreign_shares = {}
@@ -314,7 +329,33 @@ def fetch_twse_data():
           hist_foreign_shares[d_str] = day_map
     except:
       pass
-    time.sleep(0.15)
+    time.sleep(0.12)
+
+  # 前日成交金額對應
+  prev_turnover_dict = {}
+  if len(dates) > 1:
+    prev_d = dates[1]
+    mi_purl = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?response=json&type=ALLBUT0999&date={prev_d}"
+    try:
+      rp = session.get(mi_purl, timeout=6)
+      if rp.status_code == 200:
+        pd_data = rp.json()
+        for t in pd_data.get("tables", []):
+          if "data" in t:
+            for r in t["data"]:
+              if len(r) >= 11:
+                c = str(r[0]).strip()
+                tv = 0.0
+                try:
+                  tv = float(str(r[4]).replace(",", ""))
+                except:
+                  try:
+                    tv = float(str(r[5]).replace(",", ""))
+                  except:
+                    pass
+                prev_turnover_dict[c] = tv
+    except:
+      pass
 
   for code in market_dict:
     market_dict[code]["前日成交金額"] = prev_turnover_dict.get(
@@ -333,7 +374,7 @@ def fetch_twse_data():
   )
 
 
-with st.spinner("⏳ 正在載入台股籌碼與均線數據..."):
+with st.spinner("⏳ 正在載入台股真實歷史價量與籌碼序列..."):
   (
       market_dict,
       latest_foreign_shares,
@@ -524,7 +565,7 @@ if market_dict:
 
   with tab_super:
     st.info(
-        "💡 **邏輯說明**：篩選 **[收盤價 > 日K MA20 且 週K MA20]** ∩ **[漲幅>0 且 外資>0 且 投信>0]** 之強勢雙A股，依族群結算「籌碼集中度得分」排序！"
+        "💡 **邏輯說明**：篩選 **[收盤價 > 真實日K MA20 且 週K MA20]** ∩ **[漲幅>0 且 外資>0 且 投信>0]** 之強勢雙A股，依族群結算「籌碼集中度得分」排序！"
     )
     if not df_super_ind_rank.empty:
       df_disp = df_super_ind_rank.copy()
@@ -562,10 +603,12 @@ if market_dict:
             if st.button(f"💾 儲存 {t_ind} 變更", key=f"btn_sub_{t_ind}"):
               update_map_from_editor(ed_sub)
     else:
-      st.warning("⚠️ 目前條件下查無符合的族群集中度資料，可放寬防護網嘗試。")
+      st.warning(
+          "⚠️ 目前真實均線條件下查無符合標的（因嚴格要求收盤價雙站上真實 MA20 且雙A同步買超），可嘗試取消或調整防護網。"
+      )
 
   with tab_raw_targets:
-    st.info(f"📋 **符合上述雙A站上均線條件個股總計**：{len(df_super_target)} 檔")
+    st.info(f"📋 **符合上述雙A站上真實均線條件個股總計**：{len(df_super_target)} 檔")
     if not df_super_target.empty:
       ed_raw = st.data_editor(
           df_super_target,

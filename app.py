@@ -231,8 +231,6 @@ def fetch_twse_data():
 
                     op_latest, op_prev = fetch_financial_data(code)
 
-                    # 模擬產生或計算日K MA20 / 週K MA20（實戰可串歷史K序列）
-                    # 這裡用收盤價動態模擬 MA20 基準比對示範
                     sim_ma20_day = round(
                         close_price * np.random.uniform(0.92, 1.05), 2
                     )
@@ -422,20 +420,16 @@ if market_dict:
 
   df_all_enriched = enrich_data(df_market)
 
-  # ==================== 核心邏輯建構 ====================
-  # 條件 A: 股價站上日K MA20 且 站上週K MA20
   cond_trend = (df_all_enriched["收盤價"] > df_all_enriched["日K_MA20"]) & (
       df_all_enriched["收盤價"] > df_all_enriched["週K_MA20"]
   )
 
-  # 條件 B: 漲幅 > 0 且 外資合買 (>0) 且 投信合買 (>0)
   cond_dual_a_up = (
       (df_all_enriched["漲跌幅(%)"] > 0)
       & (df_all_enriched["外資買賣超股數"] > 0)
       & (df_all_enriched["投信買賣超股數"] > 0)
   )
 
-  # 條件 C: 營益率防護網 (選配)
   cond_profit = (
       (
           (df_all_enriched["本季營益率(%)"] > 0)
@@ -445,20 +439,17 @@ if market_dict:
       else True
   )
 
-  # 條件 D: 放量選配
   cond_vol = (
       (df_all_enriched["成交值(億)"] > df_all_enriched["前日成交值(億)"])
       if enable_vol_growth_filter
       else True
   )
 
-  # 總合極選集區：站上日/週MA20 ∩ 雙A合擊上漲 ∩ 基本面防護
   df_super_target = df_all_enriched[
       cond_trend & cond_dual_a_up & cond_profit & cond_vol
   ].copy()
 
 
-  # 族群聚合評分排序函式
   def build_super_industry_ranking(df_pool):
     raw = df_pool[df_pool["族群"].str.strip() != ""]
     if raw.empty:
@@ -484,7 +475,6 @@ if market_dict:
     summary["外資總買超張數"] = summary["外資總買超張數"].round(0)
     summary["投信總買超張數"] = summary["投信總買超張數"].round(0)
 
-    # 集中度評分公式：雙法人總集中度 × 開根號檔數 × 雙A合擊強力係數
     summary["籌碼集中度得分"] = round(
         summary["平均雙法人總集中度(%)"]
         * np.sqrt(summary["股票檔數"])
@@ -492,7 +482,7 @@ if market_dict:
         * np.log1p(summary["投信總買超張數"].clip(lower=0)),
         2,
     )
-    summary = summary.sort_values(by="筹码集中度得分" if "筹码集中度得分" in summary.columns else "籌碼集中度得分", ascending=False)
+    summary = summary.sort_values(by="籌碼集中度得分", ascending=False)
     cols = [
         "族群",
         "股票檔數",
@@ -511,11 +501,10 @@ if market_dict:
 
   df_super_ind_rank = build_super_industry_ranking(df_super_target)
 
-  # ==================== 頁面顯示 ====================
   tab_super, tab_raw_targets, tab_all_search = st.tabs([
-      🔥 雙A多頭站上均線：族群集中度排名,
-      📋 符合條件之個股明細檔,
-      🔍 全市場快速查找,
+      "🔥 雙A多頭站上均線：族群集中度排名",
+      "📋 符合條件之個股明細檔",
+      "🔍 全市場快速查找",
   ])
 
   def update_map_from_editor(edited_df):
@@ -570,7 +559,7 @@ if market_dict:
                 ],
                 key=f"sub_edit_{t_ind}",
             )
-            if st.button(f"💾 儲存 {t_ind} 變更", key=f"btn_sub_{t_ind} ):
+            if st.button(f"💾 儲存 {t_ind} 變更", key=f"btn_sub_{t_ind}"):
               update_map_from_editor(ed_sub)
     else:
       st.warning("⚠️ 目前條件下查無符合的族群集中度資料，可放寬防護網嘗試。")

@@ -364,7 +364,8 @@ def build_group_stats_with_inst(codes_list):
       "總成交值億",
       "平均共振分",
       "平均放大倍數",
-      > average_pct / average_combined,
+      "平均漲跌幅",
+      "平均雙法人合佔比",
       "占比(%)",
   ]
   group_summary = group_summary[[c for c in cols if c in group_summary.columns]]
@@ -383,7 +384,6 @@ df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 # 新增功能：外資 Top100 / 投信 Top100 族群集中度比較
 # ---------------------------------------------------------
 def build_top100_institutional_concentration():
-  # 抓出外資買超前 100 名
   fii_sorted = sorted(
       [
           (code, d["外資淨買超股數"])
@@ -394,7 +394,6 @@ def build_top100_institutional_concentration():
       reverse=True,
   )[:100]
 
-  # 抓出投信買超前 100 名
   sitc_sorted = sorted(
       [
           (code, d["投信淨買超股數"])
@@ -438,9 +437,7 @@ def build_top100_institutional_concentration():
         .reset_index()
     )
     grp["平均本比"] = round(grp["平均本比"], 3)
-    grp["籌碼集中強度"] = round(
-        grp["平均本比"] * np.sqrt(grp["家數"]), 3
-    )
+    grp["籌碼集中強度"] = round(grp["平均本比"] * np.sqrt(grp["家數"]), 3)
     grp = grp.sort_values(by="總買超張數", ascending=False).reset_index(
         drop=True
     )

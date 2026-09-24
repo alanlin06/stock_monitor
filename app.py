@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + Yahoo Finance 歷史防護)")
+st.title("🎯 台股強勢策略 (雙法人分頁完整復刻版)")
 
 DB_FILE = "industry_db.json"
 
@@ -76,15 +76,13 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯（改用 yfinance 抓取歷史並快取，徹底解決暫無資料問題）
+# AI 指標計算邏輯 (yfinance)
 # =========================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_history_cached(code, start_str):
-    """使用 Yahoo Finance 穩定取得個股歷史收盤價，避免證交所限速"""
     formatted_start = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:]}"
     
-    # 1. 嘗試上市 (.TW)
     try:
         ticker = f"{code}.TW"
         df = yf.download(ticker, start=formatted_start, progress=False)
@@ -100,7 +98,6 @@ def get_stock_history_cached(code, start_str):
     except Exception:
         pass
         
-    # 2. 嘗試上櫃 (.TWO)
     try:
         ticker = f"{code}.TWO"
         df = yf.download(ticker, start=formatted_start, progress=False)
@@ -120,9 +117,7 @@ def get_stock_history_cached(code, start_str):
 
 
 def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
-    """批次計算 AI 20日均模型訊號 (買進/賣出燈號)"""
     signals_dict = {}
-    
     try:
         ref_date = datetime.strptime(latest_date_str, "%Y%m%d")
     except Exception:
@@ -134,7 +129,6 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
     for code in stock_codes:
         try:
             rows = get_stock_history_cached(code, start_str)
-            
             if len(rows) > 20:
                 df_stock = pd.DataFrame(rows)
                 df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
@@ -176,7 +170,7 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
 
 
 # =========================================================
-# 取得 TWSE 當日行情與法人資料
+# 取得 TWSE 資料
 # =========================================================
 
 @st.cache_data(ttl=600)
@@ -310,7 +304,7 @@ def fetch_top100_data():
                                 pct_val = (chg_val / prev_p) * 100 if prev_p > 0 else 0.0
 
                                 m_dict[code] = {
-                                    "官方名稱": name,
+                                "官方名稱": name,
                                     "收盤價": close_p,
                                     "漲跌幅(%)": round(pct_val, 2),
                                     "成交金額": tv,
@@ -347,7 +341,7 @@ if latest_date:
 
 
 # =========================================================
-# Top N 與後續運算邏輯
+# 篩選邏輯
 # =========================================================
 
 def get_top_n_codes(m_dict, n=100):
@@ -368,6 +362,33 @@ newcomer_codes_up = [
 
 recurring_codes_up = [
     c for c in today_top100 if (c in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
+]
+
+# 雙法人獨立買超清單邏輯
+fii_sorted = sorted(
+    [
+        (code, data["外資淨買超股_數"] if "外資淨買超股_數" in data else data["外資淨買超股數"])
+        for code, data in latest_inst.items()
+    ],
+    key=lambda x: x[1],
+    reverse=True,
+)
+top_fii_codes = [item[0] for item in fii_sorted[:100]]
+
+sitc_sorted = sorted(
+    [
+        (code, data["投信淨買超股_數"] if "投信淨買超股_數" in data else data["投信淨買超股數"])
+        for code, data in latest_inst.items()
+    ],
+    key=lambda x: x[1],
+    reverse=True,
+)
+top_sitc_codes = [item[0] for item in sitc_sorted[:100]]
+
+# 雙法人皆買超前100名且上漲的交集或聯集標的
+dual_target_codes = [
+    c for c in set(top_fii_codes).union(set(top_sitc_codes))
+    if c in today_dict and today_dict[c]["漲跌幅(%)"] > 0
 ]
 
 
@@ -447,24 +468,24 @@ def build_group_stats_with_inst(codes_list):
         rows.append({
             "代號": c,
             "官方名稱": info["官方名稱"],
+            "族群": ind,
+            "雙法人合佔比(%)": round(combined_ratio, 3),
+            "外資買超(張)": round(fii_shares / 1000, 1),
+            "投信買超(張)": round(sitc_shares / 1000, 1),
             "🤖 AI訊號狀態": ai_signal,
             "🔥 效率籌碼共振分": resonance_score,
             "成交值放大倍數": multiplier,
             "漲跌幅(%)": pct_chg,
-            "雙法人合佔比(%)": round(combined_ratio, 3),
             "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
             "收盤價": close_p,
             "成交值(億)": round(amt_today / 100000000, 2),
-            "外資買超(張)": round(fii_shares / 1000, 1),
-            "投信買超(張)": round(sitc_shares / 1000, 1),
-            "族群": ind,
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
+            "族群法人參與檔數": industry_stats["族群法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })
 
@@ -504,6 +525,7 @@ def build_group_stats_with_inst(codes_list):
 
 df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
 df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
+df_dual, grp_dual = build_group_stats_with_inst(dual_target_codes)
 
 
 def update_map_from_editor(edited_df):
@@ -522,9 +544,10 @@ def update_map_from_editor(edited_df):
 # 頁籤介面
 # =========================================================
 
-tab1, tab2, tab4 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "新進榜強勢股",
     "持續中強勢股",
+    "🚀 雙法人同步鎖定",
     "全市場快速查找與歸類",
 ])
 
@@ -570,6 +593,27 @@ with tab2:
     else:
         st.info("目前無符合條件的持續中標的。")
 
+with tab3:
+    st.subheader("🚀 雙法人同步鎖定 (外資/投信買超前100名 且 當日上漲)")
+    if not grp_dual.empty:
+        c1, c2 = st.columns([1.1, 1.4])
+        with c1:
+            st.markdown("### 📊 雙法人族群集中排行")
+            st.dataframe(grp_dual, use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown(f"### 📋 雙法人強勢股清單 ({len(df_dual)}檔)")
+            ed_dual = st.data_editor(
+                df_dual,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in df_dual.columns if c not in ["族群"]],
+                key="ed_dual",
+            )
+            if st.button("💾 儲存雙法人族群修改", key="btn_save_dual"):
+                update_map_from_editor(ed_dual)
+    else:
+        st.info("今日無符合「外資/投信買超前100名且上漲」的雙法人標的。")
+
 with tab4:
     st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
     all_rows = []
@@ -605,23 +649,23 @@ with tab4:
         all_rows.append({
             "代號": code,
             "官方名稱": info["官方名稱"],
+            "族群": ind,
+            "雙法人合佔比(%)": round(combined_ratio, 3),
+            "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
+            "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
             "🤖 AI訊號狀態": ai_signal,
             "🔥 效率籌碼共振分": resonance_score,
             "成交值放大倍數": multiplier,
             "漲跌幅(%)": pct_chg,
-            "雙法人合佔比(%)": round(combined_ratio, 3),
             "符合量價/籌碼優選": "符合" if (pct_chg <= multiplier and combined_ratio > 0) else "一般",
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
             "收盤價": info["收盤價"],
             "成交值(億)": round(amt_today / 100000000, 2),
-            "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
-            "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
-            "族群": ind,
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

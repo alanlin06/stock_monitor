@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標)")
+st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + 自動回溯最近交易日)")
 
 DB_FILE = "industry_db.json"
 
@@ -82,15 +82,12 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
     """批次抓取歷史資料並計算 AI 20日均模型訊號 (買進/賣出燈號)"""
     signals_dict = {}
     
-    # 為了計算 3 年歷史區間 (約 756 交易日 + 緩衝)，計算大約近 4 年日曆日
     end_date = datetime.now()
     start_date = end_date - timedelta(days=365 * 4)
     start_str = start_date.strftime("%Y%m%d")
-    end_str = end_date.strftime("%Y%m%d")
 
     for code in stock_codes:
         try:
-            # 台灣證交所個股歷史日成交資訊網址
             url = (
                 f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?"
                 f"response=json&date={start_str}&stockNo={code}"
@@ -100,11 +97,9 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
                 jdata = res.json()
                 if jdata.get("stat") == "OK" and "data" in jdata:
                     raw_data = jdata["data"]
-                    # 欄位格式通常為: [日期, 成交股數, 成交金額, 開盤價, 最高價, 最低價, 收盤價, 漲跌價差, 成交筆數]
                     rows = []
                     for r in raw_data:
                         try:
-                            # 民國年轉西元年或直接抓取收盤價
                             close_p = float(str(r[6]).replace(",", ""))
                             rows.append({"Close": close_p})
                         except Exception:
@@ -112,31 +107,24 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
                     
                     if len(rows) > 50:
                         df_stock = pd.DataFrame(rows)
-                        # 1. 計算 20 日均線
                         df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
                         
-                        # 2. 計算過去 3 年（約 756 交易日）高低點區間
                         lookback = min(len(df_stock), 756)
                         df_stock["Hist_High"] = df_stock["MA20"].rolling(window=lookback).max()
                         df_stock["Hist_Low"] = df_stock["MA20"].rolling(window=lookback).min()
                         
-                        # 3. 百分比位置
                         df_stock["Position_Pct"] = (
                             (df_stock["MA20"] - df_stock["Hist_Low"]) / 
                             (df_stock["Hist_High"] - df_stock["Hist_Low"] + 1e-8)
                         ) * 100
                         
-                        # 4. 判斷最新訊號
-                        # 下界 20%, 上界 80%
                         lower_th, upper_th = 20.0, 80.0
                         if len(df_stock) >= 2:
                             curr_pct = df_stock["Position_Pct"].iloc[-1]
                             prev_pct = df_stock["Position_Pct"].iloc[-2]
                             
-                            # 買進訊號：原本小於 20 如今向上突破 20
                             if prev_pct < lower_th and curr_pct >= lower_th:
                                 signals_dict[code] = "🟢 買進訊號"
-                            # 賣出訊號：原本大於 80 如今向下跌破 80
                             elif prev_pct > upper_th and curr_pct <= upper_th:
                                 signals_dict[code] = "🔴 賣出訊號"
                             elif curr_pct <= lower_th:
@@ -161,7 +149,7 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
 
 
 # =========================================================
-# 取得 TWSE 資料
+# 取得 TWSE 資料 (自動向前回溯最近有交易資料的兩個日期)
 # =========================================================
 
 @st.cache_data(ttl=600)
@@ -185,7 +173,8 @@ def fetch_top100_data():
     curr = datetime.now()
     dates = []
 
-    for i in range(15):
+    # 最多往前掃描 20 天，自動找出有資料的最新兩個交易日（避免假日空白）
+    for i in range(20):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/"
@@ -202,7 +191,7 @@ def fetch_top100_data():
         except Exception:
             pass
         curr -= timedelta(days=1)
-        time.sleep(0.12)
+        time.sleep(0.1)
 
     if len(dates) == 0:
         return {}, {}, {}, []
@@ -210,35 +199,45 @@ def fetch_top100_data():
     latest_date = dates[0]
     prev_date = dates[1] if len(dates) > 1 else latest_date
 
+    # 取得法人 T86 資料（若當日無資料，同樣往前回溯確保拿得到最近一次）
     def get_t86_map(d_str):
         t_map = {}
-        url = (
-            "https://www.twse.com.tw/rwd/zh/fund/"
-            f"T86?response=json&date={d_str}&selectType=ALLBUT0999"
-        )
-        try:
-            r = session.get(url, timeout=6)
-            if r.status_code == 200:
-                d = r.json()
-                if d.get("stat") == "OK" and "data" in d:
-                    for row in d["data"]:
-                        if len(row) > 10:
-                            code = str(row[0]).strip()
-                            name = str(row[1]).strip()
-                            if len(code) == 4 and code.isdigit():
-                                try:
-                                    f_val = float(str(row[4]).replace(",", ""))
-                                    t_val = float(str(row[10]).replace(",", ""))
-                                    t_map[code] = {
-                                        "官方名稱": name,
-                                        "外資淨買超股數": f_val,
-                                        "投信淨買超股數": t_val,
-                                    }
-                                except Exception:
-                                    pass
-        except Exception:
-            pass
-        time.sleep(0.12)
+        target_d = d_str
+        
+        for _ in range(5):
+            url = (
+                "https://www.twse.com.tw/rwd/zh/fund/"
+                f"T86?response=json&date={target_d}&selectType=ALLBUT0999"
+            )
+            try:
+                r = session.get(url, timeout=6)
+                if r.status_code == 200:
+                    d = r.json()
+                    if d.get("stat") == "OK" and "data" in d and len(d["data"]) > 0:
+                        for row in d["data"]:
+                            if len(row) > 10:
+                                code = str(row[0]).strip()
+                                name = str(row[1]).strip()
+                                if len(code) == 4 and code.isdigit():
+                                    try:
+                                        f_val = float(str(row[4]).replace(",", ""))
+                                        t_val = float(str(row[10]).replace(",", ""))
+                                        t_map[code] = {
+                                            "官方名稱": name,
+                                            "外資淨買超股數": f_val,
+                                            "投信淨買超股數": t_val,
+                                        }
+                                    except Exception:
+                                        pass
+                        break # 成功抓到資料就跳出
+            except Exception:
+                pass
+            
+            # 如果這天沒資料，日期減一天再試
+            dt = datetime.strptime(target_d, "%Y%m%d") - timedelta(days=1)
+            target_d = dt.strftime("%Y%m%d")
+            time.sleep(0.1)
+
         return t_map
 
     latest_inst = get_t86_map(latest_date)
@@ -308,19 +307,17 @@ def fetch_top100_data():
 
 
 # =========================================================
-# 取得資料
+# 取得資料執行
 # =========================================================
 
-with st.spinner("⏳ 正在取得今日與前日成交值百大與法人籌碼對應，並計算 AI 訊號..."):
+with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並計算 AI 訊號..."):
     today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
 
-    # 建立共用的 session 實例以便抓取個股歷史計算 AI 指標
     session_ai = requests.Session()
     session_ai.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
     
-    # 預先收集所有需要算 AI 訊號的股票代號（為了效能，可針對目前顯示的清單計算，此處先抓取全部現有代號或快取）
     all_active_codes = list(today_dict.keys())
     ai_signals_map = calculate_ai_signals_for_stocks(session_ai, all_active_codes)
 
@@ -330,11 +327,11 @@ prev_date = target_dates[1] if len(target_dates) > 1 else ""
 
 if latest_date:
     st.sidebar.markdown("---")
-    st.sidebar.success(f"📅 官方同步日：{latest_date} (對比 {prev_date})")
+    st.sidebar.success(f"📅 有效對應交易日：{latest_date} (對比 {prev_date})")
 
 
 # =========================================================
-# Top N
+# Top N 與後續運算邏輯
 # =========================================================
 
 def get_top_n_codes(m_dict, n=100):
@@ -349,11 +346,6 @@ def get_top_n_codes(m_dict, n=100):
 today_top100 = get_top_n_codes(today_dict, 100)
 prev_top100 = get_top_n_codes(prev_dict, 100)
 
-
-# =========================================================
-# 新進榜與持續強勢
-# =========================================================
-
 newcomer_codes_up = [
     c for c in today_top100 if (c not in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
 ]
@@ -362,10 +354,6 @@ recurring_codes_up = [
     c for c in today_top100 if (c in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
 ]
 
-
-# =========================================================
-# 法人資訊與族群分析
-# =========================================================
 
 def get_inst_info(code):
     return latest_inst.get(code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0})
@@ -408,10 +396,6 @@ def classify_industry_state(target_code, industry_stats):
     return "⚪ 單兵先行"
 
 
-# =========================================================
-# 建立強勢股資料
-# =========================================================
-
 def build_group_stats_with_inst(codes_list):
     rows = []
     for c in codes_list:
@@ -442,8 +426,6 @@ def build_group_stats_with_inst(codes_list):
 
         industry_stats = get_industry_institution_stats(ind)
         industry_state = classify_industry_state(c, industry_stats)
-        
-        # 取得 AI 訊號狀態
         ai_signal = ai_signals_map.get(c, "⚪ 計算中")
 
         rows.append({
@@ -475,8 +457,8 @@ def build_group_stats_with_inst(codes_list):
         return pd.DataFrame(), pd.DataFrame()
 
     df = df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
-
     total_count = len(df)
+    
     group_summary = (
         df.groupby("族群")
         .agg(
@@ -508,10 +490,6 @@ df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
 df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
 
 
-# =========================================================
-# 編輯族群
-# =========================================================
-
 def update_map_from_editor(edited_df):
     if not edited_df.empty and "代號" in edited_df.columns and "族群" in edited_df.columns:
         updated_map = st.session_state.user_industry_map.copy()
@@ -525,7 +503,7 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 頁籤
+# 頁籤版面
 # =========================================================
 
 tab1, tab2, tab4 = st.tabs([
@@ -533,11 +511,6 @@ tab1, tab2, tab4 = st.tabs([
     "持續中強勢股",
     "全市場快速查找與歸類",
 ])
-
-
-# =========================================================
-# TAB 1
-# =========================================================
 
 with tab1:
     st.subheader("🚀 新進榜強勢股")
@@ -560,11 +533,6 @@ with tab1:
     else:
         st.info("今日無符合條件的新進榜標的。")
 
-
-# =========================================================
-# TAB 2
-# =========================================================
-
 with tab2:
     st.subheader("📌 持續中強勢股")
     if not grp_rec_up.empty:
@@ -585,11 +553,6 @@ with tab2:
                 update_map_from_editor(ed_rec)
     else:
         st.info("目前無符合條件的持續中標的。")
-
-
-# =========================================================
-# TAB 4
-# =========================================================
 
 with tab4:
     st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")

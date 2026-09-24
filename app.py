@@ -356,37 +356,23 @@ if search_query:
 
 
 # =========================================================
-# 市場共識邏輯修正：依據「雙法人平均籌碼集中度」取前三強
+# 市場共識新邏輯：外資 TOP 100 與投信 TOP 100 交叉比對（交集重複股票）
 # =========================================================
 
-def get_top3_groups_by_concentration(grp_df):
-    if grp_df.empty:
-        return set()
-    valid_grp = grp_df[grp_df["族群"].str.strip() != ""]
-    if valid_grp.empty:
-        return set()
-    # 改為依據「雙法人平均籌碼集中度」由高到低排序取前 3 強
-    top3 = valid_grp.sort_values(by="雙法人平均籌碼集中度", ascending=False).head(3)
-    return set(top3["族群"])
-
-top3_amt_groups = get_top3_groups_by_concentration(grp_amt)
-top3_fii_groups = get_top3_groups_by_concentration(grp_fii)
-top3_sitc_groups = get_top3_groups_by_concentration(grp_sitc)
-
-# 三方前三強聯集 (Union)
-consensus_groups = top3_amt_groups.union(top3_fii_groups).union(top3_sitc_groups)
-
-def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
-    if not target_groups:
+def build_market_consensus_intersection(d_fii, d_sitc):
+    if d_fii.empty or d_sitc.empty:
         return pd.DataFrame(), pd.DataFrame()
         
-    all_dfs = [d for d in [d_amt, d_fii, d_sitc] if not d.empty and "族群" in d.columns]
-    if not all_dfs:
-        return pd.DataFrame(), pd.DataFrame()
-        
-    combined_df = pd.concat(all_dfs).drop_duplicates(subset=["代號"]).copy()
-    consensus_df = combined_df[combined_df["族群"].isin(target_groups)].copy()
+    fii_codes = set(d_fii["代號"].astype(str))
+    sitc_codes = set(d_sitc["代號"].astype(str))
     
+    # 取兩者皆有上榜的重複股票代號交集
+    common_codes = fii_codes.intersection(sitc_codes)
+    if not common_codes:
+        return pd.DataFrame(), pd.DataFrame()
+        
+    # 從外資清單中抓出同時具備投信上榜的交集個股資料
+    consensus_df = d_fii[d_fii["代號"].astype(str).isin(common_codes)].copy()
     if consensus_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
@@ -414,7 +400,8 @@ def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
         })
 
     consensus_group_summary = pd.DataFrame(group_rows)
-    # 共識區一樣依「雙法人平均籌碼集中度」與總成交值進行強弱排序
+    
+    # 依據「雙法人平均籌碼集中度」由強到弱排序
     if not consensus_group_summary.empty:
         consensus_group_summary = consensus_group_summary.sort_values(
             by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False
@@ -422,7 +409,7 @@ def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
 
     return consensus_df, consensus_group_summary
 
-df_consensus, grp_consensus = build_market_consensus_new(df_amt, df_fii, df_sitc, consensus_groups)
+df_consensus, grp_consensus = build_market_consensus_intersection(df_fii, df_sitc)
 
 
 def update_map_from_editor(edited_df):
@@ -499,7 +486,7 @@ with tab1:
         if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
             update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無符合條件的市場共識族群。")
+        st.info("目前無同時名列外資與投信買超前 100 名的交集個股。")
 
 with tab2:
     if not df_amt.empty:

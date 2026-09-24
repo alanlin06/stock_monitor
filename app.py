@@ -24,7 +24,7 @@ DB_FILE = "industry_db.json"
 
 
 # =========================================================
-# 族群資料庫 (未設定時預設給空白)
+# 族群資料庫
 # =========================================================
 
 def load_db():
@@ -75,7 +75,7 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# 取得 TWSE 資料
+# 取得 TWSE 資料（擴充以計算連續買超天數）
 # =========================================================
 
 @st.cache_data(ttl=600)
@@ -98,24 +98,25 @@ def fetch_top100_data():
     curr = datetime.now()
     dates = []
 
-    for i in range(20):
+    # 為了計算連續買超，我們多抓取最近 15 個有效交易日
+    for i in range(30):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/"
             f"MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
         )
         try:
-            res = session.get(test_url, timeout=5)
+            res = session.get(test_url, timeout=4)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("stat") == "OK" and len(data.get("tables", [])) > 0:
                     dates.append(d_str)
-                    if len(dates) >= 2:
+                    if len(dates) >= 15:
                         break
         except Exception:
             pass
         curr -= timedelta(days=1)
-        time.sleep(0.05)
+        time.sleep(0.03)
 
     if len(dates) == 0:
         return {}, {}, {}, []
@@ -123,16 +124,18 @@ def fetch_top100_data():
     latest_date = dates[0]
     prev_date = dates[1] if len(dates) > 1 else latest_date
 
-    def get_t86_map(d_str):
-        t_map = {}
+    # 抓取多日的 T86 籌碼對應表
+    historical_inst = {}
+    for d_str in dates[:10]: # 取最近 10 天計算連續天數
         target_d = d_str
-        for _ in range(5):
+        t_map = {}
+        for _ in range(3):
             url = (
                 "https://www.twse.com.tw/rwd/zh/fund/"
                 f"T86?response=json&date={target_d}&selectType=ALLBUT0999"
             )
             try:
-                r = session.get(url, timeout=6)
+                r = session.get(url, timeout=5)
                 if r.status_code == 200:
                     d = r.json()
                     if d.get("stat") == "OK" and "data" in d and len(d["data"]) > 0:
@@ -154,13 +157,43 @@ def fetch_top100_data():
                         break 
             except Exception:
                 pass
-            
             dt = datetime.strptime(target_d, "%Y%m%d") - timedelta(days=1)
             target_d = dt.strftime("%Y%m%d")
-            time.sleep(0.05)
-        return t_map
+            time.sleep(0.03)
+        historical_inst[d_str] = t_map
 
-    latest_inst = get_t86_map(latest_date)
+    latest_inst = historical_inst.get(latest_date, {})
+
+    # 計算連續買超天數
+    fii_consec_days = {}
+    sitc_consec_days = {}
+    
+    all_codes = set()
+    for d_str in dates[:10]:
+        all_codes.update(historical_inst.get(d_str, {}).keys())
+
+    for code in all_codes:
+        # 外資連續買超天數計算
+        f_days = 0
+        for d_str in dates[:10]:
+            day_data = historical_inst.get(d_str, {}).get(code, {})
+            val = day_data.get("外資淨買超股數", 0)
+            if val > 0:
+                f_days += 1
+            else:
+                break
+        fii_consec_days[code] = f_days
+
+        # 投信連續買超天數計算
+        s_days = 0
+        for d_str in dates[:10]:
+            day_data = historical_inst.get(d_str, {}).get(code, {})
+            val = day_data.get("投信淨買超股數", 0)
+            if val > 0:
+                s_days += 1
+            else:
+                break
+        sitc_consec_days[code] = s_days
 
     def get_day_market(d_str):
         m_dict = {}
@@ -169,7 +202,7 @@ def fetch_top100_data():
             f"MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
         )
         try:
-            res = session.get(url, timeout=8)
+            res = session.get(url, timeout=6)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("stat") == "OK":
@@ -223,15 +256,15 @@ def fetch_top100_data():
     today_dict = get_day_market(latest_date)
     prev_dict = get_day_market(prev_date)
 
-    return today_dict, prev_dict, latest_inst, dates
+    return today_dict, prev_dict, latest_inst, dates, fii_consec_days, sitc_consec_days
 
 
 # =========================================================
 # 執行資料取得
 # =========================================================
 
-with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼..."):
-    today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
+with st.spinner("⏳ 正在取得最近有效交易日資料與計算連續買超天數..."):
+    today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_top100_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
     prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
@@ -302,10 +335,15 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = max(0.0, (sitc_shares / est_total_shares) * 100)
         combined_ratio = fii_ratio + sitc_ratio
 
+        f_days = fii_consec_days.get(c, 0)
+        s_days = sitc_consec_days.get(c, 0)
+
         rows.append({
             "代號": c,
             "官方名稱": info["官方名稱"],
             "族群": ind,
+            "外資連買日": f_days,
+            "投信連買日": s_days,
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
             "雙法人合佔比(%)": round(combined_ratio, 3),
@@ -335,6 +373,8 @@ def build_group_stats_with_inst(codes_list):
             "族群": g_name,
             "個股數": len(sub),
             "總成交值億": round(sub["成交值(億)"].sum(), 2),
+            "外資平均連買日": round(sub["外資連買日"].mean(), 1),
+            "投信平均連買日": round(sub["投信連買日"].mean(), 1),
             "外本比": weighted_avg_sqrt(sub, "外本比(%)"),
             "投本比": weighted_avg_sqrt(sub, "投本比(%)"),
             "雙法人平均籌碼集中度": weighted_avg_sqrt(sub, "雙法人合佔比(%)"),
@@ -356,7 +396,7 @@ if search_query:
 
 
 # =========================================================
-# 市場共識新邏輯：外資 TOP 100 與投信 TOP 100 交叉比對（交集重複股票）
+# 市場共識新邏輯：外資 TOP 100 與投信 TOP 100 交叉比對
 # =========================================================
 
 def build_market_consensus_intersection(d_fii, d_sitc):
@@ -366,12 +406,10 @@ def build_market_consensus_intersection(d_fii, d_sitc):
     fii_codes = set(d_fii["代號"].astype(str))
     sitc_codes = set(d_sitc["代號"].astype(str))
     
-    # 取兩者皆有上榜的重複股票代號交集
     common_codes = fii_codes.intersection(sitc_codes)
     if not common_codes:
         return pd.DataFrame(), pd.DataFrame()
         
-    # 從外資清單中抓出同時具備投信上榜的交集個股資料
     consensus_df = d_fii[d_fii["代號"].astype(str).isin(common_codes)].copy()
     if consensus_df.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -394,6 +432,8 @@ def build_market_consensus_intersection(d_fii, d_sitc):
             "族群": g_name,
             "個股數": len(sub),
             "總成交值億": total_amt,
+            "外資平均連買日": round(sub["外資連買日"].mean(), 1),
+            "投信平均連買日": round(sub["投信連買日"].mean(), 1),
             "外本比": weighted_avg_sqrt_cons(sub, "外本比(%)"),
             "投本比": weighted_avg_sqrt_cons(sub, "投本比(%)"),
             "雙法人平均籌碼集中度": weighted_avg_sqrt_cons(sub, "雙法人合佔比(%)"),
@@ -401,7 +441,6 @@ def build_market_consensus_intersection(d_fii, d_sitc):
 
     consensus_group_summary = pd.DataFrame(group_rows)
     
-    # 依據「雙法人平均籌碼集中度」由強到弱排序
     if not consensus_group_summary.empty:
         consensus_group_summary = consensus_group_summary.sort_values(
             by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False

@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + 自動回溯最近交易日)")
+st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + 自動回溯最近交易日 + API快取防護)")
 
 DB_FILE = "industry_db.json"
 
@@ -75,14 +75,44 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯（修正日期防呆與歷史回溯）
+# AI 指標計算邏輯（加入快取避免被證交所 Rate Limit）
 # =========================================================
 
-def calculate_ai_signals_for_stocks(session, stock_codes, latest_date_str):
-    """批次抓取歷史資料並計算 AI 20日均模型訊號 (買進/賣出燈號)"""
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_stock_history_cached(code, start_str):
+    """單獨快取每一檔股票的歷史資料，避免重複發送請求被證交所阻擋"""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    })
+    
+    try:
+        url = (
+            f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?"
+            f"response=json&date={start_str}&stockNo={code}"
+        )
+        res = session.get(url, timeout=5)
+        if res.status_code == 200:
+            jdata = res.json()
+            if jdata.get("stat") == "OK" and "data" in jdata:
+                raw_data = jdata["data"]
+                rows = []
+                for r in raw_data:
+                    try:
+                        close_p = float(str(r[6]).replace(",", ""))
+                        rows.append({"Close": close_p})
+                    except Exception:
+                        continue
+                return rows
+    except Exception:
+        pass
+    return []
+
+
+def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
+    """批次計算 AI 20日均模型訊號 (買進/賣出燈號)"""
     signals_dict = {}
     
-    # 根據取得的最近有效交易日作為終點，往前推 4 年（約 1460 天）作為起點
     try:
         ref_date = datetime.strptime(latest_date_str, "%Y%m%d")
     except Exception:
@@ -93,62 +123,44 @@ def calculate_ai_signals_for_stocks(session, stock_codes, latest_date_str):
 
     for code in stock_codes:
         try:
-            url = (
-                f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?"
-                f"response=json&date={start_str}&stockNo={code}"
-            )
-            res = session.get(url, timeout=4)
-            if res.status_code == 200:
-                jdata = res.json()
-                if jdata.get("stat") == "OK" and "data" in jdata:
-                    raw_data = jdata["data"]
-                    rows = []
-                    for r in raw_data:
-                        try:
-                            # 證交所 API 回傳的收盤價通常在第 6 欄
-                            close_p = float(str(r[6]).replace(",", ""))
-                            rows.append({"Close": close_p})
-                        except Exception:
-                            continue
+            rows = get_stock_history_cached(code, start_str)
+            
+            if len(rows) > 20:
+                df_stock = pd.DataFrame(rows)
+                df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
+                
+                lookback = min(len(df_stock), 756)
+                df_stock["Hist_High"] = df_stock["MA20"].rolling(window=lookback).max()
+                df_stock["Hist_Low"] = df_stock["MA20"].rolling(window=lookback).min()
+                
+                df_stock["Position_Pct"] = (
+                    (df_stock["MA20"] - df_stock["Hist_Low"]) / 
+                    (df_stock["Hist_High"] - df_stock["Hist_Low"] + 1e-8)
+                ) * 100
+                
+                lower_th, upper_th = 20.0, 80.0
+                if len(df_stock) >= 2:
+                    curr_pct = df_stock["Position_Pct"].iloc[-1]
+                    prev_pct = df_stock["Position_Pct"].iloc[-2]
                     
-                    if len(rows) > 20:
-                        df_stock = pd.DataFrame(rows)
-                        df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
-                        
-                        lookback = min(len(df_stock), 756)
-                        df_stock["Hist_High"] = df_stock["MA20"].rolling(window=lookback).max()
-                        df_stock["Hist_Low"] = df_stock["MA20"].rolling(window=lookback).min()
-                        
-                        df_stock["Position_Pct"] = (
-                            (df_stock["MA20"] - df_stock["Hist_Low"]) / 
-                            (df_stock["Hist_High"] - df_stock["Hist_Low"] + 1e-8)
-                        ) * 100
-                        
-                        lower_th, upper_th = 20.0, 80.0
-                        if len(df_stock) >= 2:
-                            curr_pct = df_stock["Position_Pct"].iloc[-1]
-                            prev_pct = df_stock["Position_Pct"].iloc[-2]
-                            
-                            if pd.isna(curr_pct):
-                                signals_dict[code] = "⚪ 計算中"
-                            elif prev_pct < lower_th and curr_pct >= lower_th:
-                                signals_dict[code] = "🟢 買進訊號"
-                            elif prev_pct > upper_th and curr_pct <= upper_th:
-                                signals_dict[code] = "🔴 賣出訊號"
-                            elif curr_pct <= lower_th:
-                                signals_dict[code] = "🟢 處於低檔區"
-                            elif curr_pct >= upper_th:
-                                signals_dict[code] = "🔴 處於高檔區"
-                            else:
-                                signals_dict[code] = "⚪ 區間震盪"
-                        else:
-                            signals_dict[code] = "⚪ 資料不足"
+                    if pd.isna(curr_pct):
+                        signals_dict[code] = "⚪ 計算中"
+                    elif prev_pct < lower_th and curr_pct >= lower_th:
+                        signals_dict[code] = "🟢 買進訊號"
+                    elif prev_pct > upper_th and curr_pct <= upper_th:
+                        signals_dict[code] = "🔴 賣出訊號"
+                    elif curr_pct <= lower_th:
+                        signals_dict[code] = "🟢 處於低檔區"
+                    elif curr_pct >= upper_th:
+                        signals_dict[code] = "🔴 處於高檔區"
                     else:
-                        signals_dict[code] = "⚪ 資料不足"
+                        signals_dict[code] = "⚪ 區間震盪"
                 else:
-                    signals_dict[code] = "⚪ 無法取得"
+                    signals_dict[code] = "⚪ 資料不足"
             else:
-                signals_dict[code] = "⚪ 連線逾時"
+                signals_dict[code] = "⚪ 暫無資料"
+            
+            # 微小緩衝避免短時間發出過多請求
             time.sleep(0.05)
         except Exception:
             signals_dict[code] = "⚪ 暫無資料"
@@ -321,15 +333,9 @@ with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並計�
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
     prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
-
-    session_ai = requests.Session()
-    session_ai.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    })
     
     all_active_codes = list(today_dict.keys())
-    # 傳入最新的有效日期字串來確保歷史抓取起點正確
-    ai_signals_map = calculate_ai_signals_for_stocks(session_ai, all_active_codes, latest_date)
+    ai_signals_map = calculate_ai_signals_for_stocks(all_active_codes, latest_date)
 
 
 if latest_date:

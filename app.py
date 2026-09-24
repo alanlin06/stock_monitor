@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (雙法人交集嚴格版)")
+st.title("🎯 台股強勢策略 (雙法人交集嚴格修復版)")
 
 DB_FILE = "industry_db.json"
 
@@ -364,7 +364,6 @@ recurring_codes_up = [
     c for c in today_top100 if (c in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
 ]
 
-# 雙法人獨立買超清單邏輯
 fii_sorted = sorted(
     [
         (code, data["外資淨買超股數"])
@@ -419,8 +418,10 @@ def get_industry_institution_stats(industry):
         if code in today_top100: top100_count += 1
 
     return {
-        "外資參與檔數": fii_count, "投信參與檔數": sitc_count,
-        "雙法人參與檔數": both_count, "法人參與檔數": institutional_count,
+        "外資參與檔數": fii_count, 
+        "投信參與檔數": sitc_count,  # 完整補上此欄位
+        "雙法人參與檔數": both_count, 
+        "法人參與檔數": institutional_count,
         "Top100檔數": top100_count,
     }
 
@@ -666,8 +667,8 @@ with tab4:
             "成交值(億)": round(amt_today / 100000000, 2),
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
-            "族群投信參與檔數": industry_stats["族群投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
+            "族群投信參與檔數": industry_stats["投信參與檔數"],
+            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

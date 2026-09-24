@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (雙法人分頁修復版)")
+st.title("🎯 台股強勢策略 (雙法人交集嚴格版)")
 
 DB_FILE = "industry_db.json"
 
@@ -385,9 +385,11 @@ sitc_sorted = sorted(
 )
 top_sitc_codes = [item[0] for item in sitc_sorted[:100]]
 
-# 外資買超前100名 或 投信買超前100名 且 當日上漲
+# 嚴格交集邏輯：外資前100名 與 投信前100名 的重複標的 且 當日上漲
+intersection_fii_sitc = set(top_fii_codes).intersection(set(top_sitc_codes))
+
 dual_target_codes = [
-    c for c in set(top_fii_codes).union(set(top_sitc_codes))
+    c for c in intersection_fii_sitc
     if c in today_dict and today_dict[c]["漲跌幅(%)"] > 0
 ]
 
@@ -594,7 +596,7 @@ with tab2:
         st.info("目前無符合條件的持續中標的。")
 
 with tab3:
-    st.subheader("🚀 雙法人同步鎖定 (外資/投信買超前100名 且 當日上漲)")
+    st.subheader("🚀 雙法人同步鎖定 (外資與投信買超皆前100名之交集 且 當日上漲)")
     if not grp_dual.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -612,7 +614,7 @@ with tab3:
             if st.button("💾 儲存雙法人族群修改", key="btn_save_dual"):
                 update_map_from_editor(ed_dual)
     else:
-        st.info("今日無符合「外資/投信買超前100名且上漲」的雙法人標的。")
+        st.info("今日無符合「外資與投信皆在前100名且上漲」的交集標的。")
 
 with tab4:
     st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
@@ -664,8 +666,8 @@ with tab4:
             "成交值(億)": round(amt_today / 100000000, 2),
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
-            "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
+            "族群投信參與檔數": industry_stats["族群投信參與檔數"],
+            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

@@ -405,7 +405,7 @@ def get_industry_institution_stats(industry):
         return {
             "外資參與檔數": 0, 
             "投信參與檔數": 0, 
-            "雙法人參與檔數": 0,  # 完整補上此處的預設回傳值
+            "雙法人參與檔數": 0,  
             "法人參與檔數": 0, 
             "Top100檔數": 0,
         }
@@ -644,6 +644,7 @@ with tab4:
             industry_stats = get_industry_institution_stats(ind)
             industry_state = classify_industry_state(code, industry_stats)
         else:
+            # 完整補齊所有參與檔數欄位，防止未分類個股報錯
             industry_stats = {
                 "外資參與檔數": 0, 
                 "投信參與檔數": 0, 
@@ -674,7 +675,7 @@ with tab4:
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

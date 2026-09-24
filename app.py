@@ -134,7 +134,6 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
                 df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
                 df_stock["STD20"] = df_stock["Close"].rolling(window=20).std()
                 
-                # 模擬 AI-20日模型通道（上下軌）
                 df_stock["Upper_Band"] = df_stock["MA20"] + (2.0 * df_stock["STD20"])
                 df_stock["Lower_Band"] = df_stock["MA20"] - (2.0 * df_stock["STD20"])
                 
@@ -411,6 +410,7 @@ def get_industry_institution_stats(industry):
             "雙法人參與檔數": 0,  
             "法人參與檔數": 0, 
             "Top100檔數": 0,
+            "族群雙法人參與檔數": 0,
         }
 
     fii_count, sitc_count, both_count, institutional_count, top100_count = 0, 0, 0, 0, 0
@@ -429,6 +429,7 @@ def get_industry_institution_stats(industry):
         "雙法人參與檔數": both_count,  
         "法人參與檔數": institutional_count,
         "Top100檔數": top100_count,
+        "族群雙法人參與檔數": both_count,
     }
 
 
@@ -653,6 +654,7 @@ with tab4:
                 "雙法人參與檔數": 0, 
                 "法人參與檔數": 0, 
                 "Top100檔數": 0,
+                "族群雙法人參與檔數": 0,
             }
             industry_state = "⚪ 未分類"
 

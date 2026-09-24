@@ -544,6 +544,81 @@ if search_query:
         df_sitc = df_sitc[df_sitc["代號"].str.contains(search_query) | df_sitc["官方名稱"].str.contains(search_query)]
 
 
+# =========================================================
+# 市場共識交叉比對邏輯
+# =========================================================
+
+def build_market_consensus(d1, d2, d3):
+    sets = []
+    for df_item in [d1, d2, d3]:
+        if not df_item.empty and "代號" in df_item.columns:
+            sets.append(set(df_item["代號"].astype(str)))
+        else:
+            sets.append(set())
+            
+    if len(sets) == 3:
+        common_codes = sets[0].intersection(sets[1]).intersection(sets[2])
+    elif len(sets) == 2:
+        common_codes = sets[0].intersection(sets[1])
+    elif len(sets) == 1:
+        common_codes = sets[0]
+    else:
+        common_codes = set()
+
+    rows = []
+    # 以成交值 TOP 100 完整資料源為基準來抓取對應欄位
+    base_df = d1 if not d1.empty else (d2 if not d2.empty else d3)
+    
+    if not base_df.empty and common_codes:
+        subset = base_df[base_df["代號"].astype(str).isin(common_codes)].copy()
+        for _, row in subset.iterrows():
+            c = row["代號"]
+            # 額外統計出現在幾個分頁中
+            in_amt = "✅" if (not d1.empty and c in set(d1["代號"].astype(str))) else "❌"
+            in_fii = "✅" if (not d2.empty and c in set(d2["代號"].astype(str))) else "❌"
+            in_sitc = "✅" if (not d3.empty and c in set(d3["代號"].astype(str))) else "❌"
+            
+            row_dict = row.to_dict()
+            row_dict["成交值TOP100"] = in_amt
+            row_dict["外資TOP100"] = in_fii
+            row_dict["投信TOP100"] = in_sitc
+            rows.append(row_dict)
+
+    consensus_df = pd.DataFrame(rows)
+    if not consensus_df.empty:
+        consensus_df = consensus_df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
+        
+        total_count = len(consensus_df)
+        consensus_group = (
+            consensus_df.groupby("族群")
+            .agg(
+                個股數=("代號", "count"),
+                總成交值億=("成交值(億)", "sum"),
+                平均共振分=("🔥 效率籌碼共振分", "mean"),
+                平均放大倍數=("成交值放大倍數", "mean"),
+                平均漲跌幅=("漲跌幅(%)", "mean"),
+                平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
+                族群外資參與檔數=("族群外資參與檔數", "max"),
+                族群投信參與檔數=("族群投信參與檔數", "max"),
+                族群雙法人參與檔數=("族群雙法人參與檔數", "max"),
+                族群法人參與檔數=("族群法人參與檔數", "max"),
+                族群Top100檔數=("族群Top100檔數", "max"),
+            )
+            .reset_index()
+        )
+        consensus_group["占比(%)"] = round((consensus_group["個股數"] / total_count) * 100, 2)
+        consensus_group["平均共振分"] = round(consensus_group["平均共振分"], 3)
+        consensus_group["平均放大倍數"] = round(consensus_group["平均放大倍數"], 2)
+        consensus_group["平均漲跌幅"] = round(consensus_group["平均漲跌幅"], 2)
+        consensus_group["平均雙法人合佔比"] = round(consensus_group["平均雙法人合佔比"], 3)
+        return consensus_df, consensus_group
+        
+    return pd.DataFrame(), pd.DataFrame()
+
+
+df_consensus, grp_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
+
+
 def update_map_from_editor(edited_df):
     if not edited_df.empty and "代號" in edited_df.columns and "族群" in edited_df.columns:
         updated_map = st.session_state.user_industry_map.copy()
@@ -560,10 +635,11 @@ def update_map_from_editor(edited_df):
 # 頁籤介面
 # =========================================================
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "💰 成交值 TOP 100",
     "🌍 外資買超 TOP 100",
     "🏛️ 投信買超 TOP 100",
+    "🎯 市場共識",
 ])
 
 with tab1:
@@ -625,3 +701,23 @@ with tab3:
                 update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")
+
+with tab4:
+    if not grp_consensus.empty:
+        c1, c2 = st.columns([1.1, 1.4])
+        with c1:
+            st.markdown("### 📊 族群分布")
+            st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown(f"### 📋 個股清單 ({len(df_consensus)}檔)")
+            ed_consensus = st.data_editor(
+                df_consensus,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in df_consensus.columns if c not in ["族群"]],
+                key="ed_consensus_top100",
+            )
+            if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
+                update_map_from_editor(ed_consensus)
+    else:
+        st.info("目前無同時符合三大指標清單交集的個股。")

@@ -643,32 +643,40 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.markdown("### 🌐 市場共識族群彙整與最強個股檢視")
     if not df_consensus.empty:
-        
-        # 1. 呈現市場共識的族群彙整表 (含籌碼集中度)
         st.markdown("#### 📊 市場共識族群分佈與籌碼集中度統計")
+        st.markdown("請直接在下方各族群左側勾選您想檢視的方框：")
+        
+        # 動態建立含有勾選框的族群統計顯示
+        if "selected_consensus_groups" not in st.session_state:
+            st.session_state.selected_consensus_groups = {}
+            
+        grp_display_rows = []
+        for _, r in grp_consensus.iterrows():
+            g_name = r["族群"]
+            # 預設為 True 或從 state 讀取
+            if g_name not in st.session_state.selected_consensus_groups:
+                st.session_state.selected_consensus_groups[g_name] = True
+                
+            is_checked = st.checkbox(f"**{g_name}** (個股數: {r['個股數']}, 總成交值: {r['總成交值億']}億)", value=st.session_state.selected_consensus_groups[g_name], key=f"chk_inline_{g_name}")
+            st.session_state.selected_consensus_groups[g_name] = is_checked
+            
+            row_data = r.to_dict()
+            row_data["勾選"] = is_checked
+            grp_display_rows.append(row_data)
+            
+        # 顯示彙整表格供數據參閱
         st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
         st.markdown("---")
         
-        available_groups = sorted(df_consensus["族群"].unique().tolist())
-        st.markdown("請在下方勾選您想檢視的**族群板塊方框**（可複選），系統將列出該族群在共識名單中最強的個股與對應籌碼集中度：")
+        # 篩選出被勾選的族群
+        active_groups = [g for g, checked in st.session_state.selected_consensus_groups.items() if checked]
         
-        cols_checkbox = st.columns(min(len(available_groups), 4) if len(available_groups) > 0 else 1)
-        selected_groups = []
-        
-        for idx, grp_name in enumerate(available_groups):
-            col_idx = idx % len(cols_checkbox)
-            with cols_checkbox[col_idx]:
-                if st.checkbox(f"📌 {grp_name}", key=f"chk_grp_{grp_name}"):
-                    selected_groups.append(grp_name)
-        
-        st.markdown("---")
-        
-        if selected_groups:
-            filtered_consensus = df_consensus[df_consensus["族群"].isin(selected_groups)]
+        if active_groups:
+            filtered_consensus = df_consensus[df_consensus["族群"].isin(active_groups)]
             st.markdown(f"#### 📋 已勾選族群之最強共識個股清單 ({len(filtered_consensus)} 檔)")
         else:
-            st.info("💡 目前未勾選任何族群方框，以下顯示全部市場共識個股及其籌碼集中度供您參考：")
-            filtered_consensus = df_consensus
+            st.info("💡 目前未勾選任何族群，下方無顯示個股。")
+            filtered_consensus = df_consensus.iloc[0:0] # 空表
 
         ed_consensus = st.data_editor(
             filtered_consensus,

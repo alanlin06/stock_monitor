@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
-import yfinance as yf
 
 
 # =========================================================
@@ -73,88 +72,6 @@ search_query = st.sidebar.text_input(
     "🔍 側邊欄快速查找台股",
     placeholder="輸入代號或名稱 (例: 2330)",
 )
-
-
-# =========================================================
-# AI 指標計算邏輯 (AI-20日通道模型)
-# =========================================================
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_stock_history_cached(code, start_str):
-    formatted_start = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:]}"
-    
-    for suffix in [".TW", ".TWO"]:
-        try:
-            ticker = f"{code}{suffix}"
-            df = yf.download(ticker, start=formatted_start, progress=False)
-            if not df.empty:
-                if isinstance(df.columns, pd.MultiIndex):
-                    close_series = df["Close"].iloc[:, 0] if "Close" in df.columns.levels[0] else pd.Series(dtype=float)
-                else:
-                    close_series = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
-                
-                rows = [{"Close": float(val)} for val in close_series.dropna()]
-                if len(rows) > 0:
-                    return rows
-        except Exception:
-            pass
-            
-    return []
-
-
-def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
-    signals_dict = {}
-    try:
-        ref_date = datetime.strptime(latest_date_str, "%Y%m%d")
-    except Exception:
-        ref_date = datetime.now()
-        
-    start_date = ref_date - timedelta(days=120)
-    start_str = start_date.strftime("%Y%m%d")
-
-    for code in stock_codes:
-        try:
-            rows = get_stock_history_cached(code, start_str)
-            if len(rows) > 20:
-                df_stock = pd.DataFrame(rows)
-                df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
-                df_stock["STD20"] = df_stock["Close"].rolling(window=20).std()
-                
-                df_stock["Upper_Band"] = df_stock["MA20"] + (2.0 * df_stock["STD20"])
-                df_stock["Lower_Band"] = df_stock["MA20"] - (2.0 * df_stock["STD20"])
-                
-                df_stock["Channel_Pct"] = (
-                    (df_stock["Close"] - df_stock["Lower_Band"]) / 
-                    (df_stock["Upper_Band"] - df_stock["Lower_Band"] + 1e-8)
-                ) * 100
-                
-                if len(df_stock) >= 2:
-                    curr_p = df_stock["Close"].iloc[-1]
-                    upper = df_stock["Upper_Band"].iloc[-1]
-                    lower = df_stock["Lower_Band"].iloc[-1]
-                    curr_pct = df_stock["Channel_Pct"].iloc[-1]
-                    prev_pct = df_stock["Channel_Pct"].iloc[-2]
-                    
-                    if pd.isna(curr_pct):
-                        signals_dict[code] = "⚪ 計算中"
-                    elif prev_pct < 25 and curr_pct >= 25:
-                        signals_dict[code] = "🟢 買進訊號"
-                    elif prev_pct > 75 and curr_pct <= 75:
-                        signals_dict[code] = "🔴 賣出訊號"
-                    elif curr_p <= lower or curr_pct <= 15:
-                        signals_dict[code] = "🟢 處於低檔區"
-                    elif curr_p >= upper or curr_pct >= 85:
-                        signals_dict[code] = "🔴 處於高檔區"
-                    else:
-                        signals_dict[code] = "⚪ 區間震盪"
-                else:
-                    signals_dict[code] = "⚪ 資料不足"
-            else:
-                signals_dict[code] = "⚪ 暫無資料"
-        except Exception:
-            signals_dict[code] = "⚪ 暫無資料"
-            
-    return signals_dict
 
 
 # =========================================================
@@ -310,17 +227,14 @@ def fetch_top100_data():
 
 
 # =========================================================
-# 執行資料取得與 AI 訊號計算
+# 執行資料取得
 # =========================================================
 
-with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並計算 AI 訊號..."):
+with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼..."):
     today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
     prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
-    
-    all_active_codes = list(today_dict.keys())
-    ai_signals_map = calculate_ai_signals_for_stocks(all_active_codes, latest_date)
 
 
 if latest_date:
@@ -391,11 +305,7 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = max(0.0, (sitc_shares / est_total_shares) * 100)
         combined_ratio = fii_ratio + sitc_ratio
 
-        eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
-        resonance_score = round(max(combined_ratio, 0) * min(eff_ratio_factor, 5.0), 3)
-
         is_qualified_efficient = (pct_chg <= multiplier) and (combined_ratio > 0)
-        ai_signal = ai_signals_map.get(c, "⚪ 暫無資料")
 
         rows.append({
             "代號": c,
@@ -404,8 +314,6 @@ def build_group_stats_with_inst(codes_list):
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
             "雙法人合佔比(%)": round(combined_ratio, 3),
-            "🤖 AI訊號狀態": ai_signal,
-            "🔥 效率籌碼共振分": resonance_score,
             "成交值放大倍數": multiplier,
             "漲跌幅(%)": pct_chg,
             "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
@@ -417,10 +325,8 @@ def build_group_stats_with_inst(codes_list):
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    df = df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
     total_count = len(df)
     
-    # 只留下要求的欄位：外本比、投本比、雙法人平均籌碼集中度，且限定正數 (> 0)
     group_summary = (
         df.groupby("族群")
         .agg(
@@ -476,8 +382,6 @@ def build_market_consensus(d1, d2, d3):
 
     consensus_df = pd.DataFrame(rows)
     if not consensus_df.empty:
-        consensus_df = consensus_df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
-        
         consensus_group_summary = (
             consensus_df.groupby("族群")
             .agg(

@@ -356,22 +356,22 @@ if search_query:
 
 
 # =========================================================
-# 市場共識新邏輯：各榜單前三強聯集後排序
+# 市場共識邏輯修正：依據「雙法人平均籌碼集中度」取前三強
 # =========================================================
 
-def get_top3_groups(grp_df):
+def get_top3_groups_by_concentration(grp_df):
     if grp_df.empty:
         return set()
-    # 排除空白未分類族群，並依「總成交值億」排序取前 3 強
     valid_grp = grp_df[grp_df["族群"].str.strip() != ""]
     if valid_grp.empty:
         return set()
-    top3 = valid_grp.sort_values(by="總成交值億", ascending=False).head(3)
+    # 改為依據「雙法人平均籌碼集中度」由高到低排序取前 3 強
+    top3 = valid_grp.sort_values(by="雙法人平均籌碼集中度", ascending=False).head(3)
     return set(top3["族群"])
 
-top3_amt_groups = get_top3_groups(grp_amt)
-top3_fii_groups = get_top3_groups(grp_fii)
-top3_sitc_groups = get_top3_groups(grp_sitc)
+top3_amt_groups = get_top3_groups_by_concentration(grp_amt)
+top3_fii_groups = get_top3_groups_by_concentration(grp_fii)
+top3_sitc_groups = get_top3_groups_by_concentration(grp_sitc)
 
 # 三方前三強聯集 (Union)
 consensus_groups = top3_amt_groups.union(top3_fii_groups).union(top3_sitc_groups)
@@ -380,7 +380,6 @@ def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
     if not target_groups:
         return pd.DataFrame(), pd.DataFrame()
         
-    # 合併所有資料來源以便提取屬於這些族群的個股
     all_dfs = [d for d in [d_amt, d_fii, d_sitc] if not d.empty and "族群" in d.columns]
     if not all_dfs:
         return pd.DataFrame(), pd.DataFrame()
@@ -415,10 +414,10 @@ def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
         })
 
     consensus_group_summary = pd.DataFrame(group_rows)
-    # 根據總成交值或雙法人集中度進行整體強弱排序 (此處以總成交值與雙法人集中度綜合排序)
+    # 共識區一樣依「雙法人平均籌碼集中度」與總成交值進行強弱排序
     if not consensus_group_summary.empty:
         consensus_group_summary = consensus_group_summary.sort_values(
-            by=["總成交值億", "雙法人平均籌碼集中度"], ascending=False
+            by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False
         ).reset_index(drop=True)
 
     return consensus_df, consensus_group_summary

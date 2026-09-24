@@ -365,7 +365,7 @@ def get_top_n_fii_codes(inst_map, n=100):
 
 def get_top_n_sitc_codes(inst_map, n=100):
     s = sorted(
-        [(code, data["N/A"] if "N/A" in data else data["投信淨買超股數"]) for code, data in inst_map.items()],
+        [(code, data["投信淨買超股數"]) for code, data in inst_map.items()],
         key=lambda x: x[1],
         reverse=True,
     )
@@ -458,8 +458,17 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = (sitc_shares / est_total_shares) * 100
         combined_ratio = fii_ratio + sitc_ratio
 
+        # 篩選條件：雙法人占比必須大於 0
+        if combined_ratio <= 0:
+            continue
+
         eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
         resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
+
+        # 篩選條件：共振分數必須大於 0
+        if resonance_score <= 0:
+            continue
+
         is_qualified_efficient = (pct_chg <= multiplier) and (combined_ratio > 0)
 
         industry_stats = get_industry_institution_stats(ind)
@@ -561,7 +570,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-    st.subheader("💰 成交值 TOP 100 分布與明細")
+    st.subheader("💰 成交值 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_amt.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -582,7 +591,7 @@ with tab1:
         st.info("目前無符合條件的成交值資料。")
 
 with tab2:
-    st.subheader("🌍 外資買超 TOP 100 分布與明細")
+    st.subheader("🌍 外資買超 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_fii.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -603,7 +612,7 @@ with tab2:
         st.info("目前無符合條件的外資買超資料。")
 
 with tab3:
-    st.subheader("🏛️ 投信買超 TOP 100 分布與明細")
+    st.subheader("🏛️ 投信買超 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_sitc.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:

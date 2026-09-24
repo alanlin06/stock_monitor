@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import requests
 import streamlit as st
+import yfinance as yf
 
 
 # =========================================================
@@ -18,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + 自動回溯最近交易日 + API快取防護)")
+st.title("🎯 台股強勢策略 (整合口袋證券 AI 20日均指標 + Yahoo Finance 歷史防護)")
 
 DB_FILE = "industry_db.json"
 
@@ -75,37 +76,46 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯（加入快取避免被證交所 Rate Limit）
+# AI 指標計算邏輯（改用 yfinance 抓取歷史並快取，徹底解決暫無資料問題）
 # =========================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_stock_history_cached(code, start_str):
-    """單獨快取每一檔股票的歷史資料，避免重複發送請求被證交所阻擋"""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    })
+    """使用 Yahoo Finance 穩定取得個股歷史收盤價，避免證交所限速"""
+    formatted_start = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:]}"
     
+    # 1. 嘗試上市 (.TW)
     try:
-        url = (
-            f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?"
-            f"response=json&date={start_str}&stockNo={code}"
-        )
-        res = session.get(url, timeout=5)
-        if res.status_code == 200:
-            jdata = res.json()
-            if jdata.get("stat") == "OK" and "data" in jdata:
-                raw_data = jdata["data"]
-                rows = []
-                for r in raw_data:
-                    try:
-                        close_p = float(str(r[6]).replace(",", ""))
-                        rows.append({"Close": close_p})
-                    except Exception:
-                        continue
+        ticker = f"{code}.TW"
+        df = yf.download(ticker, start=formatted_start, progress=False)
+        if not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                close_series = df["Close"].iloc[:, 0] if "Close" in df.columns.levels[0] else pd.Series(dtype=float)
+            else:
+                close_series = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
+            
+            rows = [{"Close": float(val)} for val in close_series.dropna()]
+            if len(rows) > 0:
                 return rows
     except Exception:
         pass
+        
+    # 2. 嘗試上櫃 (.TWO)
+    try:
+        ticker = f"{code}.TWO"
+        df = yf.download(ticker, start=formatted_start, progress=False)
+        if not df.empty:
+            if isinstance(df.columns, pd.MultiIndex):
+                close_series = df["Close"].iloc[:, 0] if "Close" in df.columns.levels[0] else pd.Series(dtype=float)
+            else:
+                close_series = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
+            
+            rows = [{"Close": float(val)} for val in close_series.dropna()]
+            if len(rows) > 0:
+                return rows
+    except Exception:
+        pass
+        
     return []
 
 
@@ -159,9 +169,6 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
                     signals_dict[code] = "⚪ 資料不足"
             else:
                 signals_dict[code] = "⚪ 暫無資料"
-            
-            # 微小緩衝避免短時間發出過多請求
-            time.sleep(0.05)
         except Exception:
             signals_dict[code] = "⚪ 暫無資料"
             
@@ -169,12 +176,11 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
 
 
 # =========================================================
-# 取得 TWSE 資料 (自動向前回溯最近有交易資料的兩個日期)
+# 取得 TWSE 當日行情與法人資料
 # =========================================================
 
 @st.cache_data(ttl=600)
 def fetch_top100_data():
-
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -193,7 +199,6 @@ def fetch_top100_data():
     curr = datetime.now()
     dates = []
 
-    # 最多往前掃描 20 天，自動找出有資料的最新兩個交易日（避免假日空白）
     for i in range(20):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
@@ -211,7 +216,7 @@ def fetch_top100_data():
         except Exception:
             pass
         curr -= timedelta(days=1)
-        time.sleep(0.1)
+        time.sleep(0.05)
 
     if len(dates) == 0:
         return {}, {}, {}, []
@@ -222,7 +227,6 @@ def fetch_top100_data():
     def get_t86_map(d_str):
         t_map = {}
         target_d = d_str
-        
         for _ in range(5):
             url = (
                 "https://www.twse.com.tw/rwd/zh/fund/"
@@ -254,8 +258,7 @@ def fetch_top100_data():
             
             dt = datetime.strptime(target_d, "%Y%m%d") - timedelta(days=1)
             target_d = dt.strftime("%Y%m%d")
-            time.sleep(0.1)
-
+            time.sleep(0.05)
         return t_map
 
     latest_inst = get_t86_map(latest_date)
@@ -325,10 +328,10 @@ def fetch_top100_data():
 
 
 # =========================================================
-# 取得資料執行
+# 執行資料取得與 AI 訊號計算
 # =========================================================
 
-with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並計算 AI 訊號..."):
+with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並透過 Yahoo Finance 計算 AI 訊號..."):
     today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
@@ -516,7 +519,7 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 頁籤版面
+# 頁籤介面
 # =========================================================
 
 tab1, tab2, tab4 = st.tabs([

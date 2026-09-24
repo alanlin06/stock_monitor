@@ -285,14 +285,11 @@ def build_group_stats_with_inst(codes_list):
         if c not in today_dict:
             continue
         info = today_dict[c]
-        prev_info = prev_dict.get(c, {"成交金額": 0.0})
 
         amt_today = info["成交金額"]
-        amt_yesterday = prev_info["成交金額"]
-        multiplier = round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
         pct_chg = info["漲跌幅(%)"]
         
-        # 改為預設空白 ("") 讓使用者方便直接編輯
+        # 預設空白 ("") 讓使用者方便直接編輯
         ind = st.session_state.user_industry_map.get(c, "")
         
         close_p = info["收盤價"]
@@ -306,8 +303,6 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = max(0.0, (sitc_shares / est_total_shares) * 100)
         combined_ratio = fii_ratio + sitc_ratio
 
-        is_qualified_efficient = (pct_chg <= multiplier) and (combined_ratio > 0)
-
         rows.append({
             "代號": c,
             "官方名稱": info["官方名稱"],
@@ -315,9 +310,7 @@ def build_group_stats_with_inst(codes_list):
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
             "雙法人合佔比(%)": round(combined_ratio, 3),
-            "成交值放大倍數": multiplier,
             "漲跌幅(%)": pct_chg,
-            "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
             "收盤價": close_p,
             "成交值(億)": round(amt_today / 100000000, 2),
         })
@@ -372,11 +365,7 @@ def build_market_consensus(d1, d2, d3):
     if not base_df.empty and common_codes:
         subset = base_df[base_df["代號"].astype(str).isin(common_codes)].copy()
         for _, row in subset.iterrows():
-            c = row["代號"]
             row_dict = row.to_dict()
-            row_dict["成交值TOP100"] = "✅" if (not d1.empty and c in set(d1["代號"].astype(str))) else "❌"
-            row_dict["外資TOP100"] = "✅" if (not d2.empty and c in set(d2["代號"].astype(str))) else "❌"
-            row_dict["投信TOP100"] = "✅" if (not d3.empty and c in set(d3["代號"].astype(str))) else "❌"
             rows.append(row_dict)
 
     consensus_df = pd.DataFrame(rows)

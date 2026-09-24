@@ -63,6 +63,10 @@ def save_db(db_data):
 if "user_industry_map" not in st.session_state:
     st.session_state.user_industry_map = load_db()
 
+# 🔑 【修正】在此處初始化 session_state，避免 AttributeError 報錯
+if "consensus_group_checks" not in st.session_state:
+    st.session_state.consensus_group_checks = {}
+
 
 # =========================================================
 # 搜尋功能
@@ -474,7 +478,7 @@ with tab1:
         for _, r in grp_consensus.iterrows():
             g_name = r["族群"]
             
-            # 💡 【關鍵修改】重新整理或首次載入時，預設一律設為 False (不打勾)
+            # 若無記錄則預設為 False (不打勾)
             if g_name not in st.session_state.consensus_group_checks:
                 st.session_state.consensus_group_checks[g_name] = False
                 

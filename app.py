@@ -473,7 +473,7 @@ def build_group_stats_with_inst(codes_list):
             "族群": ind,
             "外本比(%)": round(fii_ratio, 3),
             "投本比(%)": round(sitc_ratio, 3),
-            "成交值集中度(%)": round((amt_today / 1e9), 3),  # 這裡以億元量化成交值集中規模
+            "成交值集中度(%)": round((amt_today / 1e9), 3),
             "雙法人合佔比(%)": round(combined_ratio, 3),
             "外資買超(張)": round(fii_shares / 1000, 1),
             "投信買超(張)": round(sitc_shares / 1000, 1),
@@ -507,6 +507,7 @@ def build_group_stats_with_inst(codes_list):
             平均共振分=("🔥 效率籌碼共振分", "mean"),
             平均外本比=("外本比(%)", "mean"),
             平均投本比=("投本比(%)", "mean"),
+            平均成交值集中度=("成交值集中度(%)", "mean"),
             平均放大倍數=("成交值放大倍數", "mean"),
             平均漲跌幅=("漲跌幅(%)", "mean"),
             平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
@@ -523,6 +524,7 @@ def build_group_stats_with_inst(codes_list):
     group_summary["平均共振分"] = round(group_summary["平均共振分"], 3)
     group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
     group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
+    group_summary["平均成交值集中度"] = round(group_summary["平均成交值集中度"], 3)
     group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
     group_summary["平均漲跌幅"] = round(group_summary["平均漲跌幅"], 2)
     group_summary["平均雙法人合佔比"] = round(group_summary["平均雙法人合佔比"], 3)
@@ -584,12 +586,35 @@ def build_market_consensus(d1, d2, d3):
     consensus_df = pd.DataFrame(rows)
     if not consensus_df.empty:
         consensus_df = consensus_df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
-        return consensus_df
         
-    return pd.DataFrame()
+        # 建立市場共識的族群彙整表 (包含籌碼集中度)
+        consensus_group_summary = (
+            consensus_df.groupby("族群")
+            .agg(
+                個股數=("代號", "count"),
+                總成交值億=("成交值(億)", "sum"),
+                平均共振分=("🔥 效率籌碼共振分", "mean"),
+                平均外本比=("外本比(%)", "mean"),
+                平均投本比=("投本比(%)", "mean"),
+                平均成交值集中度=("成交值集中度(%)", "mean"),
+                平均漲跌幅=("漲跌幅(%)", "mean"),
+            )
+            .reset_index()
+        )
+        total_consensus_count = len(consensus_df)
+        consensus_group_summary["占比(%)"] = round((consensus_group_summary["個股數"] / total_consensus_count) * 100, 2)
+        consensus_group_summary["平均共振分"] = round(consensus_group_summary["平均共振分"], 3)
+        consensus_group_summary["平均外本比"] = round(consensus_group_summary["平均外本比"], 3)
+        consensus_group_summary["平均投本比"] = round(consensus_group_summary["平均投本比"], 3)
+        consensus_group_summary["平均成交值集中度"] = round(consensus_group_summary["平均成交值集中度"], 3)
+        consensus_group_summary["平均漲跌幅"] = round(consensus_group_summary["平均漲跌幅"], 2)
+        
+        return consensus_df, consensus_group_summary
+        
+    return pd.DataFrame(), pd.DataFrame()
 
 
-df_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
+df_consensus, grp_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
 
 
 def update_map_from_editor(edited_df):
@@ -616,14 +641,17 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-    st.markdown("### 🌐 族群板塊共識與最強個股檢視")
+    st.markdown("### 🌐 市場共識族群彙整與最強個股檢視")
     if not df_consensus.empty:
-        # 取得所有在共識清單中的族群
+        
+        # 1. 呈現市場共識的族群彙整表 (含籌碼集中度)
+        st.markdown("#### 📊 市場共識族群分佈與籌碼集中度統計")
+        st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
+        st.markdown("---")
+        
         available_groups = sorted(df_consensus["族群"].unique().tolist())
+        st.markdown("請在下方勾選您想檢視的**族群板塊方框**（可複選），系統將列出該族群在共識名單中最強的個股與對應籌碼集中度：")
         
-        st.markdown("請在下方勾選您想檢視的**族群板塊方框**（可複選），系統將列出該族群在共識名單中最強的個股：")
-        
-        # 建立多欄位排版來放置方框勾選
         cols_checkbox = st.columns(min(len(available_groups), 4) if len(available_groups) > 0 else 1)
         selected_groups = []
         
@@ -639,7 +667,7 @@ with tab1:
             filtered_consensus = df_consensus[df_consensus["族群"].isin(selected_groups)]
             st.markdown(f"#### 📋 已勾選族群之最強共識個股清單 ({len(filtered_consensus)} 檔)")
         else:
-            st.info("💡 目前未勾選任何族群方框，以下顯示全部市場共識個股供您參考：")
+            st.info("💡 目前未勾選任何族群方框，以下顯示全部市場共識個股及其籌碼集中度供您參考：")
             filtered_consensus = df_consensus
 
         ed_consensus = st.data_editor(

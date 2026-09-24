@@ -344,7 +344,7 @@ if latest_date:
 
 
 # =========================================================
-# 篩選邏輯與取得清單
+# 篩選邏輯與取得清單 (含外本比、投本比、成交值集中度)
 # =========================================================
 
 def get_top_n_amt_codes(m_dict, n=100):
@@ -458,14 +458,8 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = (sitc_shares / est_total_shares) * 100
         combined_ratio = fii_ratio + sitc_ratio
 
-        if combined_ratio <= 0:
-            continue
-
         eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
-        resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
-
-        if resonance_score <= 0:
-            continue
+        resonance_score = round(max(combined_ratio, 0) * min(eff_ratio_factor, 5.0), 3)
 
         is_qualified_efficient = (pct_chg <= multiplier) and (combined_ratio > 0)
 
@@ -477,6 +471,9 @@ def build_group_stats_with_inst(codes_list):
             "代號": c,
             "官方名稱": info["官方名稱"],
             "族群": ind,
+            "外本比(%)": round(fii_ratio, 3),
+            "投本比(%)": round(sitc_ratio, 3),
+            "成交值集中度(%)": round((amt_today / 1e9), 3),  # 這裡以億元量化成交值集中規模
             "雙法人合佔比(%)": round(combined_ratio, 3),
             "外資買超(張)": round(fii_shares / 1000, 1),
             "投信買超(張)": round(sitc_shares / 1000, 1),
@@ -485,8 +482,6 @@ def build_group_stats_with_inst(codes_list):
             "成交值放大倍數": multiplier,
             "漲跌幅(%)": pct_chg,
             "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
-            "外本比(%)": round(fii_ratio, 3),
-            "投本比(%)": round(sitc_ratio, 3),
             "收盤價": close_p,
             "成交值(億)": round(amt_today / 100000000, 2),
             "族群狀態": industry_state,
@@ -510,6 +505,8 @@ def build_group_stats_with_inst(codes_list):
             個股數=("代號", "count"),
             總成交值億=("成交值(億)", "sum"),
             平均共振分=("🔥 效率籌碼共振分", "mean"),
+            平均外本比=("外本比(%)", "mean"),
+            平均投本比=("投本比(%)", "mean"),
             平均放大倍數=("成交值放大倍數", "mean"),
             平均漲跌幅=("漲跌幅(%)", "mean"),
             平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
@@ -524,6 +521,8 @@ def build_group_stats_with_inst(codes_list):
 
     group_summary["占比(%)"] = round((group_summary["個股數"] / total_count) * 100, 2)
     group_summary["平均共振分"] = round(group_summary["平均共振分"], 3)
+    group_summary["平均外本比"] = round(group_summary["平均外本比"], 3)
+    group_summary["平均投本比"] = round(group_summary["平均投本比"], 3)
     group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
     group_summary["平均漲跌幅"] = round(group_summary["平均漲跌幅"], 2)
     group_summary["平均雙法人合佔比"] = round(group_summary["平均雙法人合佔比"], 3)
@@ -545,7 +544,7 @@ if search_query:
 
 
 # =========================================================
-# 市場共識交叉比對邏輯
+# 市場共識交叉比對邏輯 (三方 TOP 100 交集)
 # =========================================================
 
 def build_market_consensus(d1, d2, d3):
@@ -585,36 +584,12 @@ def build_market_consensus(d1, d2, d3):
     consensus_df = pd.DataFrame(rows)
     if not consensus_df.empty:
         consensus_df = consensus_df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
+        return consensus_df
         
-        total_count = len(consensus_df)
-        consensus_group = (
-            consensus_df.groupby("族群")
-            .agg(
-                個股數=("代號", "count"),
-                總成交值億=("成交值(億)", "sum"),
-                平均共振分=("🔥 效率籌碼共振分", "mean"),
-                平均放大倍數=("成交值放大倍數", "mean"),
-                平均漲跌幅=("漲跌幅(%)", "mean"),
-                平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
-                族群外資參與檔數=("族群外資參與檔數", "max"),
-                族群投信參與檔數=("族群投信參與檔數", "max"),
-                族群雙法人參與檔數=("族群雙法人參與檔數", "max"),
-                族群法人參與檔數=("族群法人參與檔數", "max"),
-                族群Top100檔數=("族群Top100檔數", "max"),
-            )
-            .reset_index()
-        )
-        consensus_group["占比(%)"] = round((consensus_group["個股數"] / total_count) * 100, 2)
-        consensus_group["平均共振分"] = round(consensus_group["平均共振分"], 3)
-        consensus_group["平均放大倍數"] = round(consensus_group["平均放大倍數"], 2)
-        consensus_group["平均漲跌幅"] = round(consensus_group["平均漲跌幅"], 2)
-        consensus_group["平均雙法人合佔比"] = round(consensus_group["平均雙法人合佔比"], 3)
-        return consensus_df, consensus_group
-        
-    return pd.DataFrame(), pd.DataFrame()
+    return pd.DataFrame()
 
 
-df_consensus, grp_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
+df_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
 
 
 def update_map_from_editor(edited_df):
@@ -630,7 +605,7 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 頁籤介面 (已將「市場共識」移至最左側)
+# 頁籤介面
 # =========================================================
 
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -641,24 +616,43 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 with tab1:
-    if not grp_consensus.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.markdown("### 📊 族群分布")
-            st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(f"### 📋 個股清單 ({len(df_consensus)}檔)")
-            ed_consensus = st.data_editor(
-                df_consensus,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_consensus.columns if c not in ["族群"]],
-                key="ed_consensus_top100",
-            )
-            if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
-                update_map_from_editor(ed_consensus)
+    st.markdown("### 🌐 族群板塊共識與最強個股檢視")
+    if not df_consensus.empty:
+        # 取得所有在共識清單中的族群
+        available_groups = sorted(df_consensus["族群"].unique().tolist())
+        
+        st.markdown("請在下方勾選您想檢視的**族群板塊方框**（可複選），系統將列出該族群在共識名單中最強的個股：")
+        
+        # 建立多欄位排版來放置方框勾選
+        cols_checkbox = st.columns(min(len(available_groups), 4) if len(available_groups) > 0 else 1)
+        selected_groups = []
+        
+        for idx, grp_name in enumerate(available_groups):
+            col_idx = idx % len(cols_checkbox)
+            with cols_checkbox[col_idx]:
+                if st.checkbox(f"📌 {grp_name}", key=f"chk_grp_{grp_name}"):
+                    selected_groups.append(grp_name)
+        
+        st.markdown("---")
+        
+        if selected_groups:
+            filtered_consensus = df_consensus[df_consensus["族群"].isin(selected_groups)]
+            st.markdown(f"#### 📋 已勾選族群之最強共識個股清單 ({len(filtered_consensus)} 檔)")
+        else:
+            st.info("💡 目前未勾選任何族群方框，以下顯示全部市場共識個股供您參考：")
+            filtered_consensus = df_consensus
+
+        ed_consensus = st.data_editor(
+            filtered_consensus,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in filtered_consensus.columns if c not in ["族群"]],
+            key="ed_consensus_top100",
+        )
+        if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
+            update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無同時符合三大指標清單交集的個股。")
+        st.info("目前無同時符合三大指標 (成交值、外資、投信 TOP 100) 交集的個股。")
 
 with tab2:
     if not grp_amt.empty:

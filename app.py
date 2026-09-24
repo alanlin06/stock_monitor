@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (雙法人分頁完整復刻版)")
+st.title("🎯 台股強勢策略 (雙法人分頁修復版)")
 
 DB_FILE = "industry_db.json"
 
@@ -304,7 +304,7 @@ def fetch_top100_data():
                                 pct_val = (chg_val / prev_p) * 100 if prev_p > 0 else 0.0
 
                                 m_dict[code] = {
-                                "官方名稱": name,
+                                    "官方名稱": name,
                                     "收盤價": close_p,
                                     "漲跌幅(%)": round(pct_val, 2),
                                     "成交金額": tv,
@@ -367,7 +367,7 @@ recurring_codes_up = [
 # 雙法人獨立買超清單邏輯
 fii_sorted = sorted(
     [
-        (code, data["外資淨買超股_數"] if "外資淨買超股_數" in data else data["外資淨買超股數"])
+        (code, data["外資淨買超股數"])
         for code, data in latest_inst.items()
     ],
     key=lambda x: x[1],
@@ -377,7 +377,7 @@ top_fii_codes = [item[0] for item in fii_sorted[:100]]
 
 sitc_sorted = sorted(
     [
-        (code, data["投信淨買超股_數"] if "投信淨買超股_數" in data else data["投信淨買超股數"])
+        (code, data["投信淨買超股數"])
         for code, data in latest_inst.items()
     ],
     key=lambda x: x[1],
@@ -385,7 +385,7 @@ sitc_sorted = sorted(
 )
 top_sitc_codes = [item[0] for item in sitc_sorted[:100]]
 
-# 雙法人皆買超前100名且上漲的交集或聯集標的
+# 外資買超前100名 或 投信買超前100名 且 當日上漲
 dual_target_codes = [
     c for c in set(top_fii_codes).union(set(top_sitc_codes))
     if c in today_dict and today_dict[c]["漲跌幅(%)"] > 0
@@ -484,8 +484,8 @@ def build_group_stats_with_inst(codes_list):
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["族群法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
+            "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })
 
@@ -665,7 +665,7 @@ with tab4:
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

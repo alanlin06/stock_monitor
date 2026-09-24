@@ -318,7 +318,6 @@ def build_group_stats_with_inst(codes_list):
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # 使用「成交值加權平均 + 開根號平滑法」計算族群指標，避免檔數多導致無限放大
     def weighted_avg_sqrt(sub_df, col_name):
         valid = sub_df[sub_df[col_name] > 0]
         if valid.empty:
@@ -328,7 +327,6 @@ def build_group_stats_with_inst(codes_list):
             raw_mean = valid[col_name].mean()
         else:
             raw_mean = np.average(valid[col_name], weights=weights)
-        # 開根號平滑運算，壓抑極端值與檔數膨脹效應
         return round(float(np.sqrt(max(0.0, raw_mean))), 3)
 
     group_rows = []
@@ -358,55 +356,74 @@ if search_query:
 
 
 # =========================================================
-# 市場共識交叉比對邏輯
+# 市場共識新邏輯：各榜單前三強聯集後排序
 # =========================================================
 
-def build_market_consensus(d1, d2, d3):
-    sets = [set(d["代號"].astype(str)) for d in [d1, d2, d3] if not d.empty and "代號" in d.columns]
-    if not sets:
+def get_top3_groups(grp_df):
+    if grp_df.empty:
+        return set()
+    # 排除空白未分類族群，並依「總成交值億」排序取前 3 強
+    valid_grp = grp_df[grp_df["族群"].str.strip() != ""]
+    if valid_grp.empty:
+        return set()
+    top3 = valid_grp.sort_values(by="總成交值億", ascending=False).head(3)
+    return set(top3["族群"])
+
+top3_amt_groups = get_top3_groups(grp_amt)
+top3_fii_groups = get_top3_groups(grp_fii)
+top3_sitc_groups = get_top3_groups(grp_sitc)
+
+# 三方前三強聯集 (Union)
+consensus_groups = top3_amt_groups.union(top3_fii_groups).union(top3_sitc_groups)
+
+def build_market_consensus_new(d_amt, d_fii, d_sitc, target_groups):
+    if not target_groups:
         return pd.DataFrame(), pd.DataFrame()
         
-    common_codes = set.intersection(*sets) if len(sets) == 3 else sets[0]
-    base_df = d1 if not d1.empty else (d2 if not d2.empty else d3)
-    
-    rows = []
-    if not base_df.empty and common_codes:
-        subset = base_df[base_df["代號"].astype(str).isin(common_codes)].copy()
-        for _, row in subset.iterrows():
-            row_dict = row.to_dict()
-            rows.append(row_dict)
-
-    consensus_df = pd.DataFrame(rows)
-    if not consensus_df.empty:
-        def weighted_avg_sqrt_cons(sub_df, col_name):
-            valid = sub_df[sub_df[col_name] > 0]
-            if valid.empty:
-                return 0.0
-            weights = valid["成交值(億)"]
-            if weights.sum() == 0:
-                raw_mean = valid[col_name].mean()
-            else:
-                raw_mean = np.average(valid[col_name], weights=weights)
-            return round(float(np.sqrt(max(0.0, raw_mean))), 3)
-
-        group_rows = []
-        for g_name, sub in consensus_df.groupby("族群"):
-            group_rows.append({
-                "族群": g_name,
-                "個股數": len(sub),
-                "總成交值億": round(sub["成交值(億)"].sum(), 2),
-                "外本比": weighted_avg_sqrt_cons(sub, "外本比(%)"),
-                "投本比": weighted_avg_sqrt_cons(sub, "投本比(%)"),
-                "雙法人平均籌碼集中度": weighted_avg_sqrt_cons(sub, "雙法人合佔比(%)"),
-            })
-
-        consensus_group_summary = pd.DataFrame(group_rows)
-        return consensus_df, consensus_group_summary
+    # 合併所有資料來源以便提取屬於這些族群的個股
+    all_dfs = [d for d in [d_amt, d_fii, d_sitc] if not d.empty and "族群" in d.columns]
+    if not all_dfs:
+        return pd.DataFrame(), pd.DataFrame()
         
-    return pd.DataFrame(), pd.DataFrame()
+    combined_df = pd.concat(all_dfs).drop_duplicates(subset=["代號"]).copy()
+    consensus_df = combined_df[combined_df["族群"].isin(target_groups)].copy()
+    
+    if consensus_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
 
+    def weighted_avg_sqrt_cons(sub_df, col_name):
+        valid = sub_df[sub_df[col_name] > 0]
+        if valid.empty:
+            return 0.0
+        weights = valid["成交值(億)"]
+        if weights.sum() == 0:
+            raw_mean = valid[col_name].mean()
+        else:
+            raw_mean = np.average(valid[col_name], weights=weights)
+        return round(float(np.sqrt(max(0.0, raw_mean))), 3)
 
-df_consensus, grp_consensus = build_market_consensus(df_amt, df_fii, df_sitc)
+    group_rows = []
+    for g_name, sub in consensus_df.groupby("族群"):
+        total_amt = round(sub["成交值(億)"].sum(), 2)
+        group_rows.append({
+            "族群": g_name,
+            "個股數": len(sub),
+            "總成交值億": total_amt,
+            "外本比": weighted_avg_sqrt_cons(sub, "外本比(%)"),
+            "投本比": weighted_avg_sqrt_cons(sub, "投本比(%)"),
+            "雙法人平均籌碼集中度": weighted_avg_sqrt_cons(sub, "雙法人合佔比(%)"),
+        })
+
+    consensus_group_summary = pd.DataFrame(group_rows)
+    # 根據總成交值或雙法人集中度進行整體強弱排序 (此處以總成交值與雙法人集中度綜合排序)
+    if not consensus_group_summary.empty:
+        consensus_group_summary = consensus_group_summary.sort_values(
+            by=["總成交值億", "雙法人平均籌碼集中度"], ascending=False
+        ).reset_index(drop=True)
+
+    return consensus_df, consensus_group_summary
+
+df_consensus, grp_consensus = build_market_consensus_new(df_amt, df_fii, df_sitc, consensus_groups)
 
 
 def update_map_from_editor(edited_df):
@@ -483,7 +500,7 @@ with tab1:
         if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
             update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無同時符合三大指標交集的個股。")
+        st.info("目前無符合條件的市場共識族群。")
 
 with tab2:
     if not df_amt.empty:

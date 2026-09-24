@@ -410,7 +410,11 @@ def get_industry_institution_stats(industry):
             "雙法人參與檔數": 0,  
             "法人參與檔數": 0, 
             "Top100檔數": 0,
+            "族群外資參與檔數": 0,
+            "族群投信參與檔數": 0,
             "族群雙法人參與檔數": 0,
+            "族群法人參與檔數": 0,
+            "族群Top100檔數": 0,
         }
 
     fii_count, sitc_count, both_count, institutional_count, top100_count = 0, 0, 0, 0, 0
@@ -429,7 +433,11 @@ def get_industry_institution_stats(industry):
         "雙法人參與檔數": both_count,  
         "法人參與檔數": institutional_count,
         "Top100檔數": top100_count,
+        "族群外資參與檔數": fii_count,
+        "族群投信參與檔數": sitc_count,
         "族群雙法人參與檔數": both_count,
+        "族群法人參與檔數": institutional_count,
+        "族群Top100檔數": top100_count,
     }
 
 
@@ -654,7 +662,11 @@ with tab4:
                 "雙法人參與檔數": 0, 
                 "法人參與檔數": 0, 
                 "Top100檔數": 0,
+                "族群外資參與檔數": 0,
+                "族群投信參與檔數": 0,
                 "族群雙法人參與檔數": 0,
+                "族群法人參與檔數": 0,
+                "族群Top100檔數": 0,
             }
             industry_state = "⚪ 未分類"
 

@@ -420,7 +420,7 @@ def get_industry_institution_stats(industry):
     return {
         "外資參與檔數": fii_count, 
         "投信參與檔數": sitc_count,  
-        "雙法人參與檔數": both_count, 
+        "雙法人參與檔數": both_count,  # 完整補上此欄位
         "法人參與檔數": institutional_count,
         "Top100檔數": top100_count,
     }
@@ -488,7 +488,7 @@ def build_group_stats_with_inst(codes_list):
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
             "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["族群法人參與檔數"],
+            "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })
 
@@ -668,7 +668,7 @@ with tab4:
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
             "族群法人參與檔數": industry_stats["法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })

@@ -24,7 +24,7 @@ DB_FILE = "industry_db.json"
 
 
 # =========================================================
-# 族群資料庫
+# 族群資料庫 (未設定時預設給空白)
 # =========================================================
 
 def load_db():
@@ -291,7 +291,10 @@ def build_group_stats_with_inst(codes_list):
         amt_yesterday = prev_info["成交金額"]
         multiplier = round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
         pct_chg = info["漲跌幅(%)"]
-        ind = st.session_state.user_industry_map.get(c, "未分類")
+        
+        # 改為預設空白 ("") 讓使用者方便直接編輯
+        ind = st.session_state.user_industry_map.get(c, "")
+        
         close_p = info["收盤價"]
         inst_info = get_inst_info(c)
 
@@ -407,7 +410,10 @@ def update_map_from_editor(edited_df):
         for _, row in edited_df.iterrows():
             c_code = str(row["代號"]).strip()
             c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
-            updated_map[c_code] = c_ind
+            if c_ind != "":
+                updated_map[c_code] = c_ind
+            elif c_code in updated_map:
+                del updated_map[c_code]
         st.session_state.user_industry_map = updated_map
         save_db(updated_map)
         st.success("✅ 族群設定已成功更新！")

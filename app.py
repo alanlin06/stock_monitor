@@ -419,7 +419,7 @@ def get_industry_institution_stats(industry):
 
     return {
         "外資參與檔數": fii_count, 
-        "投信參與檔數": sitc_count,  # 完整補上此欄位
+        "投信參與檔數": sitc_count,  
         "雙法人參與檔數": both_count, 
         "法人參與檔數": institutional_count,
         "Top100檔數": top100_count,
@@ -487,8 +487,8 @@ def build_group_stats_with_inst(codes_list):
             "族群狀態": industry_state,
             "族群外資參與檔數": industry_stats["外資參與檔數"],
             "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["法人參與檔數"],
+            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
+            "族群法人參與檔數": industry_stats["族群法人參與檔數"],
             "族群Top100檔數": industry_stats["Top100檔數"],
         })
 
@@ -597,7 +597,7 @@ with tab2:
         st.info("目前無符合條件的持續中標的。")
 
 with tab3:
-    st.subheader("🚀 雙法人同步鎖定 (外資與投信買超皆前100名之交集 且 當日上漲)")
+    st.subheader("🚀 雙法人同步鎖定")
     if not grp_dual.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:

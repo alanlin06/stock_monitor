@@ -464,20 +464,19 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🎯 市場共識",
     "💰 成交值 TOP 100",
     "🌍 外資買超 TOP 100",
-    "🏛️ 投信",
+    "🏛️ 投信買超 TOP 100",
 ])
 
 with tab1:
     st.markdown("### 🔍 市場共識：雙法人交集 × 族群擴散指數評分")
     if not df_consensus.empty:
-        if "consensus_group_checks" not in st.session_state:
-            st.session_state.consensus_group_checks = {}
-
         editor_grp_data = []
         for _, r in grp_consensus.iterrows():
             g_name = r["族群"]
+            
+            # 💡 【關鍵修改】重新整理或首次載入時，預設一律設為 False (不打勾)
             if g_name not in st.session_state.consensus_group_checks:
-                st.session_state.consensus_group_checks[g_name] = True
+                st.session_state.consensus_group_checks[g_name] = False
                 
             row_dict = r.to_dict()
             row_dict["選擇"] = st.session_state.consensus_group_checks[g_name]

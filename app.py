@@ -270,8 +270,6 @@ def get_top_n_sitc_codes(inst_map, n=100):
     )
     return [item[0] for item in s[:n]]
 
-today_top100_set = set(get_top_n_amt_codes(today_dict, 100))
-
 amt_top100_codes = get_top_n_amt_codes(today_dict, 100)
 fii_top100_codes = get_top_n_fii_codes(latest_inst, 100)
 sitc_top100_codes = get_top_n_sitc_codes(latest_inst, 100)
@@ -325,8 +323,6 @@ def build_group_stats_with_inst(codes_list):
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    total_count = len(df)
-    
     group_summary = (
         df.groupby("族群")
         .agg(
@@ -479,55 +475,43 @@ with tab1:
         st.info("目前無同時符合三大指標交集的個股。")
 
 with tab2:
-    if not grp_amt.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.dataframe(grp_amt, use_container_width=True, hide_index=True)
-        with c2:
-            ed_amt = st.data_editor(
-                df_amt,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_amt.columns if c not in ["族群"]],
-                key="ed_amt_top100",
-            )
-            if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
-                update_map_from_editor(ed_amt)
+    if not df_amt.empty:
+        ed_amt = st.data_editor(
+            df_amt,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_amt.columns if c not in ["族群"]],
+            key="ed_amt_top100",
+        )
+        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+            update_map_from_editor(ed_amt)
     else:
         st.info("目前無符合條件的成交值資料。")
 
 with tab3:
-    if not grp_fii.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.dataframe(grp_fii, use_container_width=True, hide_index=True)
-        with c2:
-            ed_fii = st.data_editor(
-                df_fii,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_fii.columns if c not in ["族群"]],
-                key="ed_fii_top100",
-            )
-            if st.button("💾 儲存外資買超族群修改", key="btn_save_fii"):
-                update_map_from_editor(ed_fii)
+    if not df_fii.empty:
+        ed_fii = st.data_editor(
+            df_fii,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_fii.columns if c not in ["族群"]],
+            key="ed_fii_top100",
+        )
+        if st.button("💾 儲存外資買超族群修改", key="btn_save_fii"):
+            update_map_from_editor(ed_fii)
     else:
         st.info("目前無符合條件的外資買超資料。")
 
 with tab4:
-    if not grp_sitc.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.dataframe(grp_sitc, use_container_width=True, hide_index=True)
-        with c2:
-            ed_sitc = st.data_editor(
-                df_sitc,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_sitc.columns if c not in ["族群"]],
-                key="ed_sitc_top100",
-            )
-            if st.button("💾 儲存投信買超族群修改", key="btn_save_sitc"):
-                update_map_from_editor(ed_sitc)
+    if not df_sitc.empty:
+        ed_sitc = st.data_editor(
+            df_sitc,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_sitc.columns if c not in ["族群"]],
+            key="ed_sitc_top100",
+        )
+        if st.button("💾 儲存投信買超族群修改", key="btn_save_sitc"):
+            update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")

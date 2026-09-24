@@ -19,7 +19,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("🎯 台股強勢策略 (雙法人交集嚴格修復版)")
+st.title("台股強勢策略")
 
 DB_FILE = "industry_db.json"
 
@@ -76,7 +76,7 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯 (yfinance)
+# AI 指標計算邏輯 (yfinance - 三年期區間)
 # =========================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -123,7 +123,7 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
     except Exception:
         ref_date = datetime.now()
         
-    start_date = ref_date - timedelta(days=365 * 4)
+    start_date = ref_date - timedelta(days=365 * 3 + 60)
     start_str = start_date.strftime("%Y%m%d")
 
     for code in stock_codes:
@@ -134,15 +134,15 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
                 df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
                 
                 lookback = min(len(df_stock), 756)
-                df_stock["Hist_High"] = df_stock["MA20"].rolling(window=lookback).max()
-                df_stock["Hist_Low"] = df_stock["MA20"].rolling(window=lookback).min()
+                df_stock["Hist_High"] = df_stock["Close"].rolling(window=lookback).max()
+                df_stock["Hist_Low"] = df_stock["Close"].rolling(window=lookback).min()
                 
                 df_stock["Position_Pct"] = (
-                    (df_stock["MA20"] - df_stock["Hist_Low"]) / 
+                    (df_stock["Close"] - df_stock["Hist_Low"]) / 
                     (df_stock["Hist_High"] - df_stock["Hist_Low"] + 1e-8)
                 ) * 100
                 
-                lower_th, upper_th = 20.0, 80.0
+                lower_th, upper_th = 25.0, 75.0
                 if len(df_stock) >= 2:
                     curr_pct = df_stock["Position_Pct"].iloc[-1]
                     prev_pct = df_stock["Position_Pct"].iloc[-2]

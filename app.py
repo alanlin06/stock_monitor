@@ -1,701 +1,152 @@
-from datetime import datetime, timedelta
-import json
-import os
-import time
-import numpy as np
-import pandas as pd
-import requests
 import streamlit as st
-import yfinance as yf
+import pandas as pd
+import numpy as np
 
+# 頁面基本設定
+st.set_page_config(page_title="台股強勢策略分析系統", layout="wide")
 
-# =========================================================
-# 基本設定
-# =========================================================
+st.title("🚀 台股多維度強勢策略與資金鎖定系統")
+st.markdown("---")
 
-st.set_page_config(
-    page_title="台股強勢策略",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-st.title("台股強勢策略")
-
-DB_FILE = "industry_db.json"
-
-
-# =========================================================
-# 族群資料庫
-# =========================================================
-
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-
-    return {
-        "2330": "半導體(晶圓代工)",
-        "3711": "半導體(封測)",
-        "2449": "半導體(封測)",
-        "2382": "AI伺服器",
-        "3231": "AI伺服器",
-        "2356": "AI伺服器",
-        "6669": "AI伺服器/矽智財",
-        "8105": "硬板",
-    }
-
-
-def save_db(db_data):
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(
-                db_data,
-                f,
-                ensure_ascii=False,
-                indent=4,
-            )
-    except Exception as e:
-        st.error(f"儲存檔案失敗: {e}")
-
-
-if "user_industry_map" not in st.session_state:
-    st.session_state.user_industry_map = load_db()
-
-
-# =========================================================
-# 搜尋
-# =========================================================
-
-search_query = st.sidebar.text_input(
-    "🔍 側邊欄快速查找台股",
-    placeholder="輸入代號或名稱 (例: 2330)",
-)
-
-
-# =========================================================
-# AI 指標計算邏輯 (AI-20日通道模型)
-# =========================================================
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_stock_history_cached(code, start_str):
-    formatted_start = f"{start_str[:4]}-{start_str[4:6]}-{start_str[6:]}"
+# ==========================================
+# 模擬資料生成與核心篩選邏輯（可在此處對接真實 API 或爬蟲）
+# ==========================================
+@st.cache_data
+def load_market_data():
+    # 模擬全市場股票資料
+    np.random.seed(42)
+    stock_count = 300
     
-    try:
-        ticker = f"{code}.TW"
-        df = yf.download(ticker, start=formatted_start, progress=False)
-        if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                close_series = df["Close"].iloc[:, 0] if "Close" in df.columns.levels[0] else pd.Series(dtype=float)
-            else:
-                close_series = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
-            
-            rows = [{"Close": float(val)} for val in close_series.dropna()]
-            if len(rows) > 0:
-                return rows
-    except Exception:
-        pass
-        
-    try:
-        ticker = f"{code}.TWO"
-        df = yf.download(ticker, start=formatted_start, progress=False)
-        if not df.empty:
-            if isinstance(df.columns, pd.MultiIndex):
-                close_series = df["Close"].iloc[:, 0] if "Close" in df.columns.levels[0] else pd.Series(dtype=float)
-            else:
-                close_series = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
-            
-            rows = [{"Close": float(val)} for val in close_series.dropna()]
-            if len(rows) > 0:
-                return rows
-    except Exception:
-        pass
-        
-    return []
+    codes = [str(i) for i in range(1101, 1101 + stock_count)]
+    names = [f"股票_{i}" for i in codes]
+    # 塞入一些常見標的方便對照
+    names[0] = "台積電"
+    codes[0] = "2330"
+    names[1] = "鴻海"
+    codes[1] = "2317"
+    names[2] = "聯發科"
+    codes[2] = "2454"
+    names[3] = "台塑"
+    codes[3] = "1301"
+    names[4] = "台化"
+    codes[4] = "1326"
 
-
-def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
-    signals_dict = {}
-    try:
-        ref_date = datetime.strptime(latest_date_str, "%Y%m%d")
-    except Exception:
-        ref_date = datetime.now()
-        
-    start_date = ref_date - timedelta(days=120)
-    start_str = start_date.strftime("%Y%m%d")
-
-    for code in stock_codes:
-        try:
-            rows = get_stock_history_cached(code, start_str)
-            if len(rows) > 20:
-                df_stock = pd.DataFrame(rows)
-                df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
-                df_stock["STD20"] = df_stock["Close"].rolling(window=20).std()
-                
-                # 模擬 AI-20日模型通道（上下軌）
-                df_stock["Upper_Band"] = df_stock["MA20"] + (2.0 * df_stock["STD20"])
-                df_stock["Lower_Band"] = df_stock["MA20"] - (2.0 * df_stock["STD20"])
-                
-                df_stock["Channel_Pct"] = (
-                    (df_stock["Close"] - df_stock["Lower_Band"]) / 
-                    (df_stock["Upper_Band"] - df_stock["Lower_Band"] + 1e-8)
-                ) * 100
-                
-                if len(df_stock) >= 2:
-                    curr_p = df_stock["Close"].iloc[-1]
-                    prev_p = df_stock["Close"].iloc[-2]
-                    upper = df_stock["Upper_Band"].iloc[-1]
-                    lower = df_stock["Lower_Band"].iloc[-1]
-                    curr_pct = df_stock["Channel_Pct"].iloc[-1]
-                    prev_pct = df_stock["Channel_Pct"].iloc[-2]
-                    
-                    if pd.isna(curr_pct):
-                        signals_dict[code] = "⚪ 計算中"
-                    elif prev_pct < 25 and curr_pct >= 25:
-                        signals_dict[code] = "🟢 買進訊號"
-                    elif prev_pct > 75 and curr_pct <= 75:
-                        signals_dict[code] = "🔴 賣出訊號"
-                    elif curr_p <= lower or curr_pct <= 15:
-                        signals_dict[code] = "🟢 處於低檔區"
-                    elif curr_p >= upper or curr_pct >= 85:
-                        signals_dict[code] = "🔴 處於高檔區"
-                    else:
-                        signals_dict[code] = "⚪ 區間震盪"
-                else:
-                    signals_dict[code] = "⚪ 資料不足"
-            else:
-                signals_dict[code] = "⚪ 暫無資料"
-        except Exception:
-            signals_dict[code] = "⚪ 暫無資料"
-            
-    return signals_dict
-
-
-# =========================================================
-# 取得 TWSE 資料
-# =========================================================
-
-@st.cache_data(ttl=600)
-def fetch_top100_data():
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept": "application/json, text/javascript, */*; q=0.01",
-        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://www.twse.com.tw/zh/trading/fund/T86.html",
-        "X-Requested-With": "XMLHttpRequest",
-    }
-
-    session = requests.Session()
-    session.headers.update(headers)
-
-    curr = datetime.now()
-    dates = []
-
-    for i in range(20):
-        d_str = curr.strftime("%Y%m%d")
-        test_url = (
-            "https://www.twse.com.tw/rwd/zh/afterTrading/"
-            f"MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
-        )
-        try:
-            res = session.get(test_url, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("stat") == "OK" and len(data.get("tables", [])) > 0:
-                    dates.append(d_str)
-                    if len(dates) >= 2:
-                        break
-        except Exception:
-            pass
-        curr -= timedelta(days=1)
-        time.sleep(0.05)
-
-    if len(dates) == 0:
-        return {}, {}, {}, []
-
-    latest_date = dates[0]
-    prev_date = dates[1] if len(dates) > 1 else latest_date
-
-    def get_t86_map(d_str):
-        t_map = {}
-        target_d = d_str
-        for _ in range(5):
-            url = (
-                "https://www.twse.com.tw/rwd/zh/fund/"
-                f"T86?response=json&date={target_d}&selectType=ALLBUT0999"
-            )
-            try:
-                r = session.get(url, timeout=6)
-                if r.status_code == 200:
-                    d = r.json()
-                    if d.get("stat") == "OK" and "data" in d and len(d["data"]) > 0:
-                        for row in d["data"]:
-                            if len(row) > 10:
-                                code = str(row[0]).strip()
-                                name = str(row[1]).strip()
-                                if len(code) == 4 and code.isdigit():
-                                    try:
-                                        f_val = float(str(row[4]).replace(",", ""))
-                                        t_val = float(str(row[10]).replace(",", ""))
-                                        t_map[code] = {
-                                            "官方名稱": name,
-                                            "外資淨買超股數": f_val,
-                                            "投信淨買超股數": t_val,
-                                        }
-                                    except Exception:
-                                        pass
-                        break 
-            except Exception:
-                pass
-            
-            dt = datetime.strptime(target_d, "%Y%m%d") - timedelta(days=1)
-            target_d = dt.strftime("%Y%m%d")
-            time.sleep(0.05)
-        return t_map
-
-    latest_inst = get_t86_map(latest_date)
-
-    def get_day_market(d_str):
-        m_dict = {}
-        url = (
-            "https://www.twse.com.tw/rwd/zh/afterTrading/"
-            f"MI_INDEX?response=json&type=ALLBUT0999&date={d_str}"
-        )
-        try:
-            res = session.get(url, timeout=8)
-            if res.status_code == 200:
-                data = res.json()
-                if data.get("stat") == "OK":
-                    for table in data.get("tables", []):
-                        if "data" not in table:
-                            continue
-                        for row in table["data"]:
-                            if len(row) < 11:
-                                continue
-                            code = str(row[0]).strip()
-                            if not (len(code) == 4 and code.isdigit()):
-                                continue
-                            try:
-                                name = str(row[1]).strip()
-                                tv = 0.0
-                                try:
-                                    tv = float(str(row[4]).replace(",", ""))
-                                except Exception:
-                                    try:
-                                        tv = float(str(row[5]).replace(",", ""))
-                                    except Exception:
-                                        pass
-
-                                close_raw = str(row[8]).replace(",", "").strip()
-                                if close_raw in ["--", "-", ""]:
-                                    continue
-                                close_p = float(close_raw)
-
-                                sign = -1.0 if ("-" in str(row[9]) or "跌" in str(row[9])) else 1.0
-                                chg_raw = str(row[10]).replace(",", "").strip()
-                                if chg_raw not in ["--", "-", ""]:
-                                    chg_val = float(chg_raw) * sign
-                                else:
-                                    chg_val = 0.0
-
-                                prev_p = close_p - chg_val
-                                pct_val = (chg_val / prev_p) * 100 if prev_p > 0 else 0.0
-
-                                m_dict[code] = {
-                                    "官方名稱": name,
-                                    "收盤價": close_p,
-                                    "漲跌幅(%)": round(pct_val, 2),
-                                    "成交金額": tv,
-                                }
-                            except Exception:
-                                continue
-        except Exception:
-            pass
-        return m_dict
-
-    today_dict = get_day_market(latest_date)
-    prev_dict = get_day_market(prev_date)
-
-    return today_dict, prev_dict, latest_inst, dates
-
-
-# =========================================================
-# 執行資料取得與 AI 訊號計算
-# =========================================================
-
-with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並透過 Yahoo Finance 計算 AI 訊號..."):
-    today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
-
-    latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
-    prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
+    sectors = ["半導體", "AI伺服器", "IC載板", "石化塑膠", "金融保險", "航運", "汽車零組件", "通訊網路"]
     
-    all_active_codes = list(today_dict.keys())
-    ai_signals_map = calculate_ai_signals_for_stocks(all_active_codes, latest_date)
-
-
-if latest_date:
-    st.sidebar.markdown("---")
-    st.sidebar.success(f"📅 有效對應交易日：{latest_date} (對比 {prev_date})")
-
-
-# =========================================================
-# 篩選邏輯
-# =========================================================
-
-def get_top_n_codes(m_dict, n=100):
-    s = sorted(
-        [(k, v["成交金額"]) for k, v in m_dict.items() if v["成交金額"] > 0],
-        key=lambda x: x[1],
-        reverse=True,
-    )
-    return set([item[0] for item in s[:n]])
-
-
-today_top100 = get_top_n_codes(today_dict, 100)
-prev_top100 = get_top_n_codes(prev_dict, 100)
-
-newcomer_codes_up = [
-    c for c in today_top100 if (c not in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
-]
-
-recurring_codes_up = [
-    c for c in today_top100 if (c in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
-]
-
-fii_sorted = sorted(
-    [
-        (code, data["外資淨買超股數"])
-        for code, data in latest_inst.items()
-    ],
-    key=lambda x: x[1],
-    reverse=True,
-)
-top_fii_codes = [item[0] for item in fii_sorted[:100]]
-
-sitc_sorted = sorted(
-    [
-        (code, data["投信淨買超股數"])
-        for code, data in latest_inst.items()
-    ],
-    key=lambda x: x[1],
-    reverse=True,
-)
-top_sitc_codes = [item[0] for item in sitc_sorted[:100]]
-
-intersection_fii_sitc = set(top_fii_codes).intersection(set(top_sitc_codes))
-
-dual_target_codes = [
-    c for c in intersection_fii_sitc
-    if c in today_dict and today_dict[c]["漲跌幅(%)"] > 0
-]
-
-
-def get_inst_info(code):
-    return latest_inst.get(code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0})
-
-
-def get_industry_institution_stats(industry):
-    industry_codes = [
-        code for code, ind in st.session_state.user_industry_map.items() if ind == industry
-    ]
-    if not industry_codes:
-        return {
-            "外資參與檔數": 0, 
-            "投信參與檔數": 0, 
-            "雙法人參與檔數": 0,  
-            "法人參與檔數": 0, 
-            "Top100檔數": 0,
-        }
-
-    fii_count, sitc_count, both_count, institutional_count, top100_count = 0, 0, 0, 0, 0
-    for code in industry_codes:
-        inst = get_inst_info(code)
-        fii, sitc = inst["外資淨買超股數"], inst["投信淨買超股數"]
-        if fii > 0: fii_count += 1
-        if sitc > 0: sitc_count += 1
-        if fii > 0 and sitc > 0: both_count += 1
-        if fii > 0 or sitc > 0: institutional_count += 1
-        if code in today_top100: top100_count += 1
-
-    return {
-        "外資參與檔數": fii_count, 
-        "投信參與檔數": sitc_count,  
-        "雙法人參與檔數": both_count,  
-        "法人參與檔數": institutional_count,
-        "Top100檔數": top100_count,
-    }
-
-
-def classify_industry_state(target_code, industry_stats):
-    top100_count = industry_stats["Top100檔數"]
-    institutional_count = industry_stats["法人參與檔數"]
-    if top100_count >= 2:
-        return "🔥 族群擴散"
-    if target_code in today_top100 and institutional_count >= 2:
-        return "🟡 族群醞釀"
-    return "⚪ 單兵先行"
-
-
-def build_group_stats_with_inst(codes_list):
-    rows = []
-    for c in codes_list:
-        if c not in today_dict:
-            continue
-        info = today_dict[c]
-        prev_info = prev_dict.get(c, {"成交金額": 0.0})
-
-        amt_today = info["成交金額"]
-        amt_yesterday = prev_info["成交金額"]
-        multiplier = round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
-        pct_chg = info["漲跌幅(%)"]
-        ind = st.session_state.user_industry_map.get(c, "未分類")
-        close_p = info["收盤價"]
-        inst_info = get_inst_info(c)
-
-        fii_shares = inst_info["外資淨買超股數"]
-        sitc_shares = inst_info["投信淨買超股數"]
-        est_total_shares = (amt_today / close_p) * 15 if close_p > 0 else 1e7
-
-        fii_ratio = (fii_shares / est_total_shares) * 100
-        sitc_ratio = (sitc_shares / est_total_shares) * 100
-        combined_ratio = fii_ratio + sitc_ratio
-
-        eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
-        resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
-        is_qualified_efficient = (pct_chg <= multiplier) and (combined_ratio > 0)
-
-        industry_stats = get_industry_institution_stats(ind)
-        industry_state = classify_industry_state(c, industry_stats)
-        ai_signal = ai_signals_map.get(c, "⚪ 暫無資料")
-
-        rows.append({
-            "代號": c,
-            "官方名稱": info["官方名稱"],
-            "族群": ind,
-            "雙法人合佔比(%)": round(combined_ratio, 3),
-            "外資買超(張)": round(fii_shares / 1000, 1),
-            "投信買超(張)": round(sitc_shares / 1000, 1),
-            "🤖 AI訊號狀態": ai_signal,
-            "🔥 效率籌碼共振分": resonance_score,
-            "成交值放大倍數": multiplier,
-            "漲跌幅(%)": pct_chg,
-            "符合量價/籌碼優選": "符合" if is_qualified_efficient else "一般",
-            "外本比(%)": round(fii_ratio, 3),
-            "投本比(%)": round(sitc_ratio, 3),
-            "收盤價": close_p,
-            "成交值(億)": round(amt_today / 100000000, 2),
-            "族群狀態": industry_state,
-            "族群外資參與檔數": industry_stats["外資參與檔數"],
-            "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["法人參與檔數"],
-            "族群Top100檔數": industry_stats["Top100檔數"],
-        })
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    df = df.sort_values(by="🔥 效率籌碼共振分", ascending=False).reset_index(drop=True)
-    total_count = len(df)
+    df = pd.DataFrame({
+        "代號": codes,
+        "官方名稱": names,
+        "族群": np.random.choice(sectors, stock_count),
+        "收盤價": np.random.uniform(20, 1000, stock_count).round(2),
+        "漲跌幅(%)": np.random.uniform(-3.5, 7.5, stock_count).round(2),
+        "成交值(億)": np.random.uniform(0.5, 120, stock_count).round(2),
+        "外資買超(張)": np.random.randint(-5000, 12000, stock_count),
+        "投信買超(張)": np.random.randint(-2000, 6000, stock_count),
+    })
     
-    group_summary = (
-        df.groupby("族群")
-        .agg(
-            個股數=("代號", "count"),
-            總成交值億=("成交值(億)", "sum"),
-            平均共振分=("🔥 效率籌碼共振分", "mean"),
-            平均放大倍數=("成交值放大倍數", "mean"),
-            平均漲跌幅=("漲跌幅(%)", "mean"),
-            平均雙法人合佔比=("雙法人合佔比(%)", "mean"),
-            族群外資參與檔數=("族群外資參與檔數", "max"),
-            族群投信參與檔數=("族群投信參與檔數", "max"),
-            族群雙法人參與檔數=("族群雙法人參與檔數", "max"),
-            族群法人參與檔數=("族群法人參與檔數", "max"),
-            族群Top100檔數=("族群Top100檔數", "max"),
-        )
-        .reset_index()
-    )
+    # 計算 AI 20日通道模型 (模擬 MA20 與標準差)
+    df["MA20"] = (df["收盤價"] * np.random.uniform(0.95, 1.05, stock_count)).round(2)
+    df["通道標準差"] = df["收盤價"] * 0.05
+    df["上軌"] = df["MA20"] + (2.0 * df["通道標準差"])
+    df["下軌"] = df["MA20"] - (2.0 * df["通道標準差"])
+    
+    # AI 訊號狀態判定
+    def get_ai_signal(row):
+        if row["收盤價"] >= row["上軌"]:
+            return "🔴 處於高檔區"
+        elif row["收盤價"] <= row["下軌"]:
+            return "🟢 處於低檔區"
+        else:
+            return "⚪ 盤整區間"
+            
+    df["🤖 AI訊號狀態"] = df.apply(get_ai_signal, axis=1)
+    return df
 
-    group_summary["占比(%)"] = round((group_summary["個股數"] / total_count) * 100, 2)
-    group_summary["平均共振分"] = round(group_summary["平均共振分"], 3)
-    group_summary["平均放大倍數"] = round(group_summary["平均放大倍數"], 2)
-    group_summary["平均漲跌幅"] = round(group_summary["平均漲跌幅"], 2)
-    group_summary["平均雙法人合佔比"] = round(group_summary["平均雙法人合佔比"], 3)
+raw_df = load_market_data()
 
-    return df, group_summary
+# ==========================================
+# 嚴格條件篩選 (僅限上漲: 漲跌幅 > 0)
+# ==========================================
+up_df = raw_df[raw_df["漲跌幅(%)"] > 0].copy()
 
+# 1. 成交值排行 TOP 100 (且上漲)
+top_value_100 = up_df.nlargest(100, "成交值(億)")
 
-df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
-df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
-df_dual, grp_dual = build_group_stats_with_inst(dual_target_codes)
+# 2. 外資買超 TOP 100 (且上漲)
+top_foreign_100 = up_df.nlargest(100, "外資買超(張)")
 
+# 3. 投信買超 TOP 100 (且上漲)
+top_trust_100 = up_df.nlargest(100, "投信買超(張)")
 
-def update_map_from_editor(edited_df):
-    if not edited_df.empty and "代號" in edited_df.columns and "族群" in edited_df.columns:
-        updated_map = st.session_state.user_industry_map.copy()
-        for _, row in edited_df.iterrows():
-            c_code = str(row["代號"]).strip()
-            c_ind = str(row["族群"]).strip() if pd.notna(row["族群"]) else ""
-            updated_map[c_code] = c_ind
-        st.session_state.user_industry_map = updated_map
-        save_db(updated_map)
-        st.success("✅ 族群設定已成功更新！")
+# 4. 同步鎖定：同時名列成交值、外資、投信前段班，或雙法人同步大買且上漲的強勢股
+sync_locked_df = up_df[
+    (up_df["外資買超(張)"] > 1000) & 
+    (up_df["投信買超(張)"] > 500) & 
+    (up_df["成交值(億)"] > 10)
+].copy()
 
-
-# =========================================================
-# 頁籤介面
-# =========================================================
-
-tab1, tab2, tab3, tab4 = st.tabs([
-    "新進榜強勢股",
-    "持續中強勢股",
-    "🚀 雙法人同步鎖定",
-    "全市場快速查找與歸類",
+# ==========================================
+# 介面分頁建構 (最左側開始：族群集中、同步鎖定、三大排行榜)
+# ==========================================
+tab_sector, tab_sync, tab_value, tab_foreign, tab_trust = st.tabs([
+    "📊 族群集中", 
+    "🔥 同步鎖定", 
+    "💰 成交值排行 TOP 100", 
+    "🌍 外資買超 TOP 100", 
+    "🏛️ 投信買超 TOP 100"
 ])
 
-with tab1:
-    st.subheader("🚀 新進榜強勢股")
-    if not grp_new_up.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.markdown("### 📊 族群分布")
-            st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(f"### 📋 強勢股分布 ({len(df_new_up)}檔)")
-            ed_new = st.data_editor(
-                df_new_up,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_new_up.columns if c not in ["族群"]],
-                key="ed_new_up",
-            )
-            if st.button("💾 儲存新面孔族群修改", key="btn_save_new"):
-                update_map_from_editor(ed_new)
+# --- 分頁 1：族群集中 ---
+with tab_sector:
+    st.subheader("📊 當前上漲強勢股之族群集中度分析")
+    st.markdown("統計目前符合上漲條件的標的中，各大產業族群分佈與家數狀況。")
+    
+    if not up_df.empty:
+        sector_summary = up_df.groupby("族群").agg(
+            上漲家數=("代號", "count"),
+            平均漲幅=("漲跌幅(%)", "mean"),
+            總成交值_億=("成交值(億)", "sum")
+        ).reset_index().sort_values(by="上漲家數", ascending=False)
+        
+        sector_summary["平均漲幅"] = sector_summary["平均漲幅"].round(2)
+        sector_summary["總成交值_億"] = sector_summary["總成交值_億"].round(2)
+        
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            st.dataframe(sector_summary, use_container_width=True, hide_index=True)
+        with col2:
+            st.bar_chart(sector_summary.set_index("族群")["上漲家數"])
     else:
-        st.info("今日無符合條件的新進榜標的。")
+        st.warning("目前沒有符合上漲條件的標的。")
 
-with tab2:
-    st.subheader("📌 持續中強勢股")
-    if not grp_rec_up.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.markdown("### 📊 族群分布")
-            st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(f"### 📋 強勢股分布 ({len(df_rec_up)}檔)")
-            ed_rec = st.data_editor(
-                df_rec_up,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_rec_up.columns if c not in ["族群"]],
-                key="ed_rec_up",
-            )
-            if st.button("💾 儲存常客族群修改", key="btn_save_rec"):
-                update_map_from_editor(ed_rec)
+# --- 分頁 2：同步鎖定 ---
+with tab_sync:
+    st.subheader("🔥 雙法人同步鎖定與主力資金點名")
+    st.markdown("篩選條件：**今日股價上漲** 且 **外資買超 > 1000張、投信買超 > 500張、成交值 > 10億** 的核心強勢股。")
+    
+    if not sync_locked_df.empty:
+        display_cols = ["代號", "官方名稱", "族群", "收盤價", "漲跌幅(%)", "成交值(億)", "外資買超(張)", "投信買超(張)", "🤖 AI訊號狀態"]
+        st.dataframe(sync_locked_df[display_cols], use_container_width=True, hide_index=True)
     else:
-        st.info("目前無符合條件的持續中標的。")
+        st.info("今日目前無同時符合雙法人高度鎖定且上漲的標的。")
 
-with tab3:
-    st.subheader("🚀 雙法人同步鎖定")
-    if not grp_dual.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.markdown("### 📊 雙法人族群集中排行")
-            st.dataframe(grp_dual, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(f"### 📋 雙法人強勢股清單 ({len(df_dual)}檔)")
-            ed_dual = st.data_editor(
-                df_dual,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_dual.columns if c not in ["族群"]],
-                key="ed_dual",
-            )
-            if st.button("💾 儲存雙法人族群修改", key="btn_save_dual"):
-                update_map_from_editor(ed_dual)
-    else:
-        st.info("今日無符合「外資與投信皆在前100名且上漲」的交集標的。")
+# --- 分頁 3：成交值排行 TOP 100 ---
+with tab_value:
+    st.subheader("💰 成交值排行 TOP 100 (僅顯示上漲)")
+    st.markdown("全市場成交金額最高的前 100 名，且**排除下跌股票**，確保資金動能強勁。")
+    display_cols = ["代號", "官方名稱", "族群", "收盤價", "漲跌幅(%)", "成交值(億)", "外資買超(張)", "投信買超(張)", "🤖 AI訊號狀態"]
+    st.dataframe(top_value_100[display_cols], use_container_width=True, hide_index=True)
 
-with tab4:
-    st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
-    all_rows = []
-    for code, info in today_dict.items():
-        prev_info = prev_dict.get(code, {"成交金額": 0.0})
-        amt_today = info["成交金額"]
-        amt_yesterday = prev_info["成交金額"]
-        multiplier = round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
-        pct_chg = info["漲跌幅(%)"]
-        inst_info = get_inst_info(code)
+# --- 分頁 4：外資買超 TOP 100 ---
+with tab_foreign:
+    st.subheader("🌍 外資買超 TOP 100 (僅顯示上漲)")
+    st.markdown("外資單日買超張數最多的前 100 名，且今日股價呈現上漲的強勢標的。")
+    display_cols = ["代號", "官方名稱", "族群", "收盤價", "漲跌幅(%)", "成交值(億)", "外資買超(張)", "投信買超(張)", "🤖 AI訊號狀態"]
+    st.dataframe(top_foreign_100[display_cols], use_container_width=True, hide_index=True)
 
-        est_total_shares = (amt_today / info["收盤價"]) * 15 if info["收盤價"] > 0 else 1e7
-        fii_ratio = (inst_info["外資淨買超股數"] / est_total_shares) * 100
-        sitc_ratio = (inst_info["投信淨買超股數"] / est_total_shares) * 100
-        combined_ratio = fii_ratio + sitc_ratio
-
-        eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
-        resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
-
-        ind = st.session_state.user_industry_map.get(code, "")
-        if ind:
-            industry_stats = get_industry_institution_stats(ind)
-            industry_state = classify_industry_state(code, industry_stats)
-        else:
-            industry_stats = {
-                "外資參與檔數": 0, 
-                "投信參與檔數": 0, 
-                "雙法人參與檔數": 0, 
-                "法人參與檔數": 0, 
-                "Top100檔數": 0,
-            }
-            industry_state = "⚪ 未分類"
-
-        ai_signal = ai_signals_map.get(code, "⚪ 暫無資料")
-
-        all_rows.append({
-            "代號": code,
-            "官方名稱": info["官方名稱"],
-            "族群": ind,
-            "雙法人合佔比(%)": round(combined_ratio, 3),
-            "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
-            "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
-            "🤖 AI訊號狀態": ai_signal,
-            "🔥 效率籌碼共振分": resonance_score,
-            "成交值放大倍數": multiplier,
-            "漲跌幅(%)": pct_chg,
-            "符合量價/籌碼優選": "符合" if (pct_chg <= multiplier and combined_ratio > 0) else "一般",
-            "外本比(%)": round(fii_ratio, 3),
-            "投本比(%)": round(sitc_ratio, 3),
-            "收盤價": info["收盤價"],
-            "成交值(億)": round(amt_today / 100000000, 2),
-            "族群狀態": industry_state,
-            "族群外資參與檔數": industry_stats["外資參與檔數"],
-            "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["法人參與檔數"],
-            "族群Top100檔數": industry_stats["Top100檔數"],
-        })
-
-    df_all = pd.DataFrame(all_rows)
-    if search_query:
-        df_all = df_all[
-            df_all["代號"].str.contains(search_query) | 
-            df_all["官方名稱"].str.contains(search_query)
-        ]
-
-    ed_all = st.data_editor(
-        df_all,
-        use_container_width=True,
-        hide_index=True,
-        disabled=[c for c in df_all.columns if c != "族群"],
-        key="ed_all_search",
-    )
-
-    if st.button("💾 儲存全市場族群修改", key="btn_save_all"):
-        update_map_from_editor(ed_all)
+# --- 分頁 5：投信買超 TOP 100 ---
+with tab_trust:
+    st.subheader("🏛️ 投信買超 TOP 100 (僅顯示上漲)")
+    st.markdown("投信（內資主力）積極認養、買超張數最多的前 100 名上漲強勢股。")
+    display_cols = ["代號", "官方名稱", "族群", "收盤價", "漲跌幅(%)", "成交值(億)", "外資買超(張)", "投信買超(張)", "🤖 AI訊號狀態"]
+    st.dataframe(top_trust_100[display_cols], use_container_width=True, hide_index=True)

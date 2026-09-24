@@ -566,14 +566,12 @@ def build_market_consensus(d1, d2, d3):
         common_codes = set()
 
     rows = []
-    # 以成交值 TOP 100 完整資料源為基準來抓取對應欄位
     base_df = d1 if not d1.empty else (d2 if not d2.empty else d3)
     
     if not base_df.empty and common_codes:
         subset = base_df[base_df["代號"].astype(str).isin(common_codes)].copy()
         for _, row in subset.iterrows():
             c = row["代號"]
-            # 額外統計出現在幾個分頁中
             in_amt = "✅" if (not d1.empty and c in set(d1["代號"].astype(str))) else "❌"
             in_fii = "✅" if (not d2.empty and c in set(d2["代號"].astype(str))) else "❌"
             in_sitc = "✅" if (not d3.empty and c in set(d3["代號"].astype(str))) else "❌"
@@ -632,17 +630,37 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 頁籤介面
+# 頁籤介面 (已將「市場共識」移至最左側)
 # =========================================================
 
 tab1, tab2, tab3, tab4 = st.tabs([
+    "🎯 市場共識",
     "💰 成交值 TOP 100",
     "🌍 外資買超 TOP 100",
     "🏛️ 投信買超 TOP 100",
-    "🎯 市場共識",
 ])
 
 with tab1:
+    if not grp_consensus.empty:
+        c1, c2 = st.columns([1.1, 1.4])
+        with c1:
+            st.markdown("### 📊 族群分布")
+            st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown(f"### 📋 個股清單 ({len(df_consensus)}檔)")
+            ed_consensus = st.data_editor(
+                df_consensus,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in df_consensus.columns if c not in ["族群"]],
+                key="ed_consensus_top100",
+            )
+            if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
+                update_map_from_editor(ed_consensus)
+    else:
+        st.info("目前無同時符合三大指標清單交集的個股。")
+
+with tab2:
     if not grp_amt.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -662,7 +680,7 @@ with tab1:
     else:
         st.info("目前無符合條件的成交值資料。")
 
-with tab2:
+with tab3:
     if not grp_fii.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -682,7 +700,7 @@ with tab2:
     else:
         st.info("目前無符合條件的外資買超資料。")
 
-with tab3:
+with tab4:
     if not grp_sitc.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -701,23 +719,3 @@ with tab3:
                 update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")
-
-with tab4:
-    if not grp_consensus.empty:
-        c1, c2 = st.columns([1.1, 1.4])
-        with c1:
-            st.markdown("### 📊 族群分布")
-            st.dataframe(grp_consensus, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(f"### 📋 個股清單 ({len(df_consensus)}檔)")
-            ed_consensus = st.data_editor(
-                df_consensus,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[c for c in df_consensus.columns if c not in ["族群"]],
-                key="ed_consensus_top100",
-            )
-            if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
-                update_map_from_editor(ed_consensus)
-    else:
-        st.info("目前無同時符合三大指標清單交集的個股。")

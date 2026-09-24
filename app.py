@@ -344,55 +344,38 @@ if latest_date:
 
 
 # =========================================================
-# 篩選邏輯
+# 篩選邏輯與取得清單
 # =========================================================
 
-def get_top_n_codes(m_dict, n=100):
+def get_top_n_amt_codes(m_dict, n=100):
     s = sorted(
         [(k, v["成交金額"]) for k, v in m_dict.items() if v["成交金額"] > 0],
         key=lambda x: x[1],
         reverse=True,
     )
-    return set([item[0] for item in s[:n]])
+    return [item[0] for item in s[:n]]
 
+def get_top_n_fii_codes(inst_map, n=100):
+    s = sorted(
+        [(code, data["外資淨買超股數"]) for code, data in inst_map.items()],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return [item[0] for item in s[:n]]
 
-today_top100 = get_top_n_codes(today_dict, 100)
-prev_top100 = get_top_n_codes(prev_dict, 100)
+def get_top_n_sitc_codes(inst_map, n=100):
+    s = sorted(
+        [(code, data["N/A"] if "N/A" in data else data["投信淨買超股數"]) for code, data in inst_map.items()],
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    return [item[0] for item in s[:n]]
 
-newcomer_codes_up = [
-    c for c in today_top100 if (c not in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
-]
+today_top100_set = set(get_top_n_amt_codes(today_dict, 100))
 
-recurring_codes_up = [
-    c for c in today_top100 if (c in prev_top100 and today_dict[c]["漲跌幅(%)"] > 0)
-]
-
-fii_sorted = sorted(
-    [
-        (code, data["外資淨買超股數"])
-        for code, data in latest_inst.items()
-    ],
-    key=lambda x: x[1],
-    reverse=True,
-)
-top_fii_codes = [item[0] for item in fii_sorted[:100]]
-
-sitc_sorted = sorted(
-    [
-        (code, data["投信淨買超股數"])
-        for code, data in latest_inst.items()
-    ],
-    key=lambda x: x[1],
-    reverse=True,
-)
-top_sitc_codes = [item[0] for item in sitc_sorted[:100]]
-
-intersection_fii_sitc = set(top_fii_codes).intersection(set(top_sitc_codes))
-
-dual_target_codes = [
-    c for c in intersection_fii_sitc
-    if c in today_dict and today_dict[c]["漲跌幅(%)"] > 0
-]
+amt_top100_codes = get_top_n_amt_codes(today_dict, 100)
+fii_top100_codes = get_top_n_fii_codes(latest_inst, 100)
+sitc_top100_codes = get_top_n_sitc_codes(latest_inst, 100)
 
 
 def get_inst_info(code):
@@ -425,7 +408,7 @@ def get_industry_institution_stats(industry):
         if sitc > 0: sitc_count += 1
         if fii > 0 and sitc > 0: both_count += 1
         if fii > 0 or sitc > 0: institutional_count += 1
-        if code in today_top100: top100_count += 1
+        if code in today_top100_set: top100_count += 1
 
     return {
         "外資參與檔數": fii_count, 
@@ -446,7 +429,7 @@ def classify_industry_state(target_code, industry_stats):
     institutional_count = industry_stats["法人參與檔數"]
     if top100_count >= 2:
         return "🔥 族群擴散"
-    if target_code in today_top100 and institutional_count >= 2:
+    if target_code in today_top100_set and institutional_count >= 2:
         return "🟡 族群醞釀"
     return "⚪ 單兵先行"
 
@@ -541,9 +524,18 @@ def build_group_stats_with_inst(codes_list):
     return df, group_summary
 
 
-df_new_up, grp_new_up = build_group_stats_with_inst(newcomer_codes_up)
-df_rec_up, grp_rec_up = build_group_stats_with_inst(recurring_codes_up)
-df_dual, grp_dual = build_group_stats_with_inst(dual_target_codes)
+df_amt, grp_amt = build_group_stats_with_inst(amt_top100_codes)
+df_fii, grp_fii = build_group_stats_with_inst(fii_top100_codes)
+df_sitc, grp_sitc = build_group_stats_with_inst(sitc_top100_codes)
+
+# 依側邊欄搜尋框過濾
+if search_query:
+    if not df_amt.empty:
+        df_amt = df_amt[df_amt["代號"].str.contains(search_query) | df_amt["官方名稱"].str.contains(search_query)]
+    if not df_fii.empty:
+        df_fii = df_fii[df_fii["代號"].str.contains(search_query) | df_fii["官方名稱"].str.contains(search_query)]
+    if not df_sitc.empty:
+        df_sitc = df_sitc[df_sitc["代號"].str.contains(search_query) | df_sitc["官方名稱"].str.contains(search_query)]
 
 
 def update_map_from_editor(edited_df):
@@ -562,154 +554,71 @@ def update_map_from_editor(edited_df):
 # 頁籤介面
 # =========================================================
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "新進榜強勢股",
-    "持續中強勢股",
-    "🚀 雙法人同步鎖定",
-    "全市場快速查找與歸類",
+tab1, tab2, tab3 = st.tabs([
+    "💰 成交值 TOP 100",
+    "🌍 外資買超 TOP 100",
+    "🏛️ 投信買超 TOP 100",
 ])
 
 with tab1:
-    st.subheader("🚀 新進榜強勢股")
-    if not grp_new_up.empty:
+    st.subheader("💰 成交值 TOP 100 分布與明細")
+    if not grp_amt.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
             st.markdown("### 📊 族群分布")
-            st.dataframe(grp_new_up, use_container_width=True, hide_index=True)
+            st.dataframe(grp_amt, use_container_width=True, hide_index=True)
         with c2:
-            st.markdown(f"### 📋 強勢股分布 ({len(df_new_up)}檔)")
-            ed_new = st.data_editor(
-                df_new_up,
+            st.markdown(f"### 📋 個股清單 ({len(df_amt)}檔)")
+            ed_amt = st.data_editor(
+                df_amt,
                 use_container_width=True,
                 hide_index=True,
-                disabled=[c for c in df_new_up.columns if c not in ["族群"]],
-                key="ed_new_up",
+                disabled=[c for c in df_amt.columns if c not in ["族群"]],
+                key="ed_amt_top100",
             )
-            if st.button("💾 儲存新面孔族群修改", key="btn_save_new"):
-                update_map_from_editor(ed_new)
+            if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+                update_map_from_editor(ed_amt)
     else:
-        st.info("今日無符合條件的新進榜標的。")
+        st.info("目前無符合條件的成交值資料。")
 
 with tab2:
-    st.subheader("📌 持續中強勢股")
-    if not grp_rec_up.empty:
+    st.subheader("🌍 外資買超 TOP 100 分布與明細")
+    if not grp_fii.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
             st.markdown("### 📊 族群分布")
-            st.dataframe(grp_rec_up, use_container_width=True, hide_index=True)
+            st.dataframe(grp_fii, use_container_width=True, hide_index=True)
         with c2:
-            st.markdown(f"### 📋 強勢股分布 ({len(df_rec_up)}檔)")
-            ed_rec = st.data_editor(
-                df_rec_up,
+            st.markdown(f"### 📋 個股清單 ({len(df_fii)}檔)")
+            ed_fii = st.data_editor(
+                df_fii,
                 use_container_width=True,
                 hide_index=True,
-                disabled=[c for c in df_rec_up.columns if c not in ["族群"]],
-                key="ed_rec_up",
+                disabled=[c for c in df_fii.columns if c not in ["族群"]],
+                key="ed_fii_top100",
             )
-            if st.button("💾 儲存常客族群修改", key="btn_save_rec"):
-                update_map_from_editor(ed_rec)
+            if st.button("💾 儲存外資買超族群修改", key="btn_save_fii"):
+                update_map_from_editor(ed_fii)
     else:
-        st.info("目前無符合條件的持續中標的。")
+        st.info("目前無符合條件的外資買超資料。")
 
 with tab3:
-    st.subheader("🚀 雙法人同步鎖定")
-    if not grp_dual.empty:
+    st.subheader("🏛️ 投信買超 TOP 100 分布與明細")
+    if not grp_sitc.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
-            st.markdown("### 📊 雙法人族群集中排行")
-            st.dataframe(grp_dual, use_container_width=True, hide_index=True)
+            st.markdown("### 📊 族群分布")
+            st.dataframe(grp_sitc, use_container_width=True, hide_index=True)
         with c2:
-            st.markdown(f"### 📋 雙法人強勢股清單 ({len(df_dual)}檔)")
-            ed_dual = st.data_editor(
-                df_dual,
+            st.markdown(f"### 📋 個股清單 ({len(df_sitc)}檔)")
+            ed_sitc = st.data_editor(
+                df_sitc,
                 use_container_width=True,
                 hide_index=True,
-                disabled=[c for c in df_dual.columns if c not in ["族群"]],
-                key="ed_dual",
+                disabled=[c for c in df_sitc.columns if c not in ["族群"]],
+                key="ed_sitc_top100",
             )
-            if st.button("💾 儲存雙法人族群修改", key="btn_save_dual"):
-                update_map_from_editor(ed_dual)
+            if st.button("💾 儲存投信買超族群修改", key="btn_save_sitc"):
+                update_map_from_editor(ed_sitc)
     else:
-        st.info("今日無符合「外資與投信皆在前100名且上漲」的交集標的。")
-
-with tab4:
-    st.subheader("🔍 全市場代號/名稱快速檢索與族群標註")
-    all_rows = []
-    for code, info in today_dict.items():
-        prev_info = prev_dict.get(code, {"成交金額": 0.0})
-        amt_today = info["成交金額"]
-        amt_yesterday = prev_info["成交金額"]
-        multiplier = round(amt_today / amt_yesterday, 2) if amt_yesterday > 0 else 0.0
-        pct_chg = info["漲跌幅(%)"]
-        inst_info = get_inst_info(code)
-
-        est_total_shares = (amt_today / info["收盤價"]) * 15 if info["收盤價"] > 0 else 1e7
-        fii_ratio = (inst_info["外資淨買超股數"] / est_total_shares) * 100
-        sitc_ratio = (inst_info["投信淨買超股數"] / est_total_shares) * 100
-        combined_ratio = fii_ratio + sitc_ratio
-
-        eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
-        resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
-
-        ind = st.session_state.user_industry_map.get(code, "")
-        if ind:
-            industry_stats = get_industry_institution_stats(ind)
-            industry_state = classify_industry_state(code, industry_stats)
-        else:
-            industry_stats = {
-                "外資參與檔數": 0, 
-                "投信參與檔數": 0, 
-                "雙法人參與檔數": 0, 
-                "法人參與檔數": 0, 
-                "Top100檔數": 0,
-                "族群外資參與檔數": 0,
-                "族群投信參與檔數": 0,
-                "族群雙法人參與檔數": 0,
-                "族群法人參與檔數": 0,
-                "族群Top100檔數": 0,
-            }
-            industry_state = "⚪ 未分類"
-
-        ai_signal = ai_signals_map.get(code, "⚪ 暫無資料")
-
-        all_rows.append({
-            "代號": code,
-            "官方名稱": info["官方名稱"],
-            "族群": ind,
-            "雙法人合佔比(%)": round(combined_ratio, 3),
-            "外資買超(張)": round(inst_info["外資淨買超股數"] / 1000, 1),
-            "投信買超(張)": round(inst_info["投信淨買超股數"] / 1000, 1),
-            "🤖 AI訊號狀態": ai_signal,
-            "🔥 效率籌碼共振分": resonance_score,
-            "成交值放大倍數": multiplier,
-            "漲跌幅(%)": pct_chg,
-            "符合量價/籌碼優選": "符合" if (pct_chg <= multiplier and combined_ratio > 0) else "一般",
-            "外本比(%)": round(fii_ratio, 3),
-            "投本比(%)": round(sitc_ratio, 3),
-            "收盤價": info["收盤價"],
-            "成交值(億)": round(amt_today / 100000000, 2),
-            "族群狀態": industry_state,
-            "族群外資參與檔數": industry_stats["外資參與檔數"],
-            "族群投信參與檔數": industry_stats["投信參與檔數"],
-            "族群雙法人參與檔數": industry_stats["族群雙法人參與檔數"],
-            "族群法人參與檔數": industry_stats["族群法人參與檔數"],
-            "族群Top100檔數": industry_stats["Top100檔數"],
-        })
-
-    df_all = pd.DataFrame(all_rows)
-    if search_query:
-        df_all = df_all[
-            df_all["代號"].str.contains(search_query) | 
-            df_all["官方名稱"].str.contains(search_query)
-        ]
-
-    ed_all = st.data_editor(
-        df_all,
-        use_container_width=True,
-        hide_index=True,
-        disabled=[c for c in df_all.columns if c != "族群"],
-        key="ed_all_search",
-    )
-
-    if st.button("💾 儲存全市場族群修改", key="btn_save_all"):
-        update_map_from_editor(ed_all)
+        st.info("目前無符合條件的投信買超資料。")

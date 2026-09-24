@@ -75,15 +75,20 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯（口袋證券 AI 20日均模型模擬）
+# AI 指標計算邏輯（修正日期防呆與歷史回溯）
 # =========================================================
 
-def calculate_ai_signals_for_stocks(session, stock_codes):
+def calculate_ai_signals_for_stocks(session, stock_codes, latest_date_str):
     """批次抓取歷史資料並計算 AI 20日均模型訊號 (買進/賣出燈號)"""
     signals_dict = {}
     
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=365 * 4)
+    # 根據取得的最近有效交易日作為終點，往前推 4 年（約 1460 天）作為起點
+    try:
+        ref_date = datetime.strptime(latest_date_str, "%Y%m%d")
+    except Exception:
+        ref_date = datetime.now()
+        
+    start_date = ref_date - timedelta(days=365 * 4)
     start_str = start_date.strftime("%Y%m%d")
 
     for code in stock_codes:
@@ -100,12 +105,13 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
                     rows = []
                     for r in raw_data:
                         try:
+                            # 證交所 API 回傳的收盤價通常在第 6 欄
                             close_p = float(str(r[6]).replace(",", ""))
                             rows.append({"Close": close_p})
                         except Exception:
                             continue
                     
-                    if len(rows) > 50:
+                    if len(rows) > 20:
                         df_stock = pd.DataFrame(rows)
                         df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
                         
@@ -123,7 +129,9 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
                             curr_pct = df_stock["Position_Pct"].iloc[-1]
                             prev_pct = df_stock["Position_Pct"].iloc[-2]
                             
-                            if prev_pct < lower_th and curr_pct >= lower_th:
+                            if pd.isna(curr_pct):
+                                signals_dict[code] = "⚪ 計算中"
+                            elif prev_pct < lower_th and curr_pct >= lower_th:
                                 signals_dict[code] = "🟢 買進訊號"
                             elif prev_pct > upper_th and curr_pct <= upper_th:
                                 signals_dict[code] = "🔴 賣出訊號"
@@ -143,7 +151,7 @@ def calculate_ai_signals_for_stocks(session, stock_codes):
                 signals_dict[code] = "⚪ 連線逾時"
             time.sleep(0.05)
         except Exception:
-            signals_dict[code] = "⚪ 計算異常"
+            signals_dict[code] = "⚪ 暫無資料"
             
     return signals_dict
 
@@ -199,7 +207,6 @@ def fetch_top100_data():
     latest_date = dates[0]
     prev_date = dates[1] if len(dates) > 1 else latest_date
 
-    # 取得法人 T86 資料（若當日無資料，同樣往前回溯確保拿得到最近一次）
     def get_t86_map(d_str):
         t_map = {}
         target_d = d_str
@@ -229,11 +236,10 @@ def fetch_top100_data():
                                         }
                                     except Exception:
                                         pass
-                        break # 成功抓到資料就跳出
+                        break 
             except Exception:
                 pass
             
-            # 如果這天沒資料，日期減一天再試
             dt = datetime.strptime(target_d, "%Y%m%d") - timedelta(days=1)
             target_d = dt.strftime("%Y%m%d")
             time.sleep(0.1)
@@ -313,17 +319,18 @@ def fetch_top100_data():
 with st.spinner("⏳ 正在取得最近有效交易日資料與籌碼，並計算 AI 訊號..."):
     today_dict, prev_dict, latest_inst, target_dates = fetch_top100_data()
 
+    latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
+    prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
+
     session_ai = requests.Session()
     session_ai.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     })
     
     all_active_codes = list(today_dict.keys())
-    ai_signals_map = calculate_ai_signals_for_stocks(session_ai, all_active_codes)
+    # 傳入最新的有效日期字串來確保歷史抓取起點正確
+    ai_signals_map = calculate_ai_signals_for_stocks(session_ai, all_active_codes, latest_date)
 
-
-latest_date = target_dates[0] if target_dates else ""
-prev_date = target_dates[1] if len(target_dates) > 1 else ""
 
 if latest_date:
     st.sidebar.markdown("---")
@@ -426,7 +433,7 @@ def build_group_stats_with_inst(codes_list):
 
         industry_stats = get_industry_institution_stats(ind)
         industry_state = classify_industry_state(c, industry_stats)
-        ai_signal = ai_signals_map.get(c, "⚪ 計算中")
+        ai_signal = ai_signals_map.get(c, "⚪ 暫無資料")
 
         rows.append({
             "代號": c,
@@ -584,7 +591,7 @@ with tab4:
             }
             industry_state = "⚪ 未分類"
 
-        ai_signal = ai_signals_map.get(code, "⚪ 計算中")
+        ai_signal = ai_signals_map.get(code, "⚪ 暫無資料")
 
         all_rows.append({
             "代號": code,

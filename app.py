@@ -458,14 +458,12 @@ def build_group_stats_with_inst(codes_list):
         sitc_ratio = (sitc_shares / est_total_shares) * 100
         combined_ratio = fii_ratio + sitc_ratio
 
-        # 篩選條件：雙法人占比必須大於 0
         if combined_ratio <= 0:
             continue
 
         eff_ratio_factor = multiplier / max(abs(pct_chg), 0.5) if multiplier > 0 else 0.0
         resonance_score = round(combined_ratio * min(eff_ratio_factor, 5.0), 3)
 
-        # 篩選條件：共振分數必須大於 0
         if resonance_score <= 0:
             continue
 
@@ -537,7 +535,6 @@ df_amt, grp_amt = build_group_stats_with_inst(amt_top100_codes)
 df_fii, grp_fii = build_group_stats_with_inst(fii_top100_codes)
 df_sitc, grp_sitc = build_group_stats_with_inst(sitc_top100_codes)
 
-# 依側邊欄搜尋框過濾
 if search_query:
     if not df_amt.empty:
         df_amt = df_amt[df_amt["代號"].str.contains(search_query) | df_amt["官方名稱"].str.contains(search_query)]
@@ -570,7 +567,6 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-    st.subheader("💰 成交值 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_amt.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -591,7 +587,6 @@ with tab1:
         st.info("目前無符合條件的成交值資料。")
 
 with tab2:
-    st.subheader("🌍 外資買超 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_fii.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:
@@ -612,7 +607,6 @@ with tab2:
         st.info("目前無符合條件的外資買超資料。")
 
 with tab3:
-    st.subheader("🏛️ 投信買超 TOP 100 (共振分>0 且 雙法人占比>0)")
     if not grp_sitc.empty:
         c1, c2 = st.columns([1.1, 1.4])
         with c1:

@@ -289,7 +289,6 @@ def build_group_stats_with_inst(codes_list):
         amt_today = info["成交金額"]
         pct_chg = info["漲跌幅(%)"]
         
-        # 預設空白 ("") 讓使用者方便直接編輯
         ind = st.session_state.user_industry_map.get(c, "")
         
         close_p = info["收盤價"]
@@ -319,22 +318,31 @@ def build_group_stats_with_inst(codes_list):
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    group_summary = (
-        df.groupby("族群")
-        .agg(
-            個股數=("代號", "count"),
-            總成交值億=("成交值(億)", "sum"),
-            外本比=("外本比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-            投本比=("投本比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-            雙法人平均籌碼集中度=("雙法人合佔比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-        )
-        .reset_index()
-    )
+    # 使用「成交值加權平均 + 開根號平滑法」計算族群指標，避免檔數多導致無限放大
+    def weighted_avg_sqrt(sub_df, col_name):
+        valid = sub_df[sub_df[col_name] > 0]
+        if valid.empty:
+            return 0.0
+        weights = valid["成交值(億)"]
+        if weights.sum() == 0:
+            raw_mean = valid[col_name].mean()
+        else:
+            raw_mean = np.average(valid[col_name], weights=weights)
+        # 開根號平滑運算，壓抑極端值與檔數膨脹效應
+        return round(float(np.sqrt(max(0.0, raw_mean))), 3)
 
-    group_summary["外本比"] = round(group_summary["外本比"], 3)
-    group_summary["投本比"] = round(group_summary["投本比"], 3)
-    group_summary["雙法人平均籌碼集中度"] = round(group_summary["雙法人平均籌碼集中度"], 3)
+    group_rows = []
+    for g_name, sub in df.groupby("族群"):
+        group_rows.append({
+            "族群": g_name,
+            "個股數": len(sub),
+            "總成交值億": round(sub["成交值(億)"].sum(), 2),
+            "外本比": weighted_avg_sqrt(sub, "外本比(%)"),
+            "投本比": weighted_avg_sqrt(sub, "投本比(%)"),
+            "雙法人平均籌碼集中度": weighted_avg_sqrt(sub, "雙法人合佔比(%)"),
+        })
 
+    group_summary = pd.DataFrame(group_rows)
     return df, group_summary
 
 
@@ -370,21 +378,29 @@ def build_market_consensus(d1, d2, d3):
 
     consensus_df = pd.DataFrame(rows)
     if not consensus_df.empty:
-        consensus_group_summary = (
-            consensus_df.groupby("族群")
-            .agg(
-                個股數=("代號", "count"),
-                總成交值億=("成交值(億)", "sum"),
-                外本比=("外本比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-                投本比=("投本比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-                雙法人平均籌碼集中度=("雙法人合佔比(%)", lambda x: max(0.0, x[x > 0].mean() if not x[x > 0].empty else 0.0)),
-            )
-            .reset_index()
-        )
-        consensus_group_summary["外本比"] = round(consensus_group_summary["外本比"], 3)
-        consensus_group_summary["投本比"] = round(consensus_group_summary["投本比"], 3)
-        consensus_group_summary["雙法人平均籌碼集中度"] = round(consensus_group_summary["雙法人平均籌碼集中度"], 3)
-        
+        def weighted_avg_sqrt_cons(sub_df, col_name):
+            valid = sub_df[sub_df[col_name] > 0]
+            if valid.empty:
+                return 0.0
+            weights = valid["成交值(億)"]
+            if weights.sum() == 0:
+                raw_mean = valid[col_name].mean()
+            else:
+                raw_mean = np.average(valid[col_name], weights=weights)
+            return round(float(np.sqrt(max(0.0, raw_mean))), 3)
+
+        group_rows = []
+        for g_name, sub in consensus_df.groupby("族群"):
+            group_rows.append({
+                "族群": g_name,
+                "個股數": len(sub),
+                "總成交值億": round(sub["成交值(億)"].sum(), 2),
+                "外本比": weighted_avg_sqrt_cons(sub, "外本比(%)"),
+                "投本比": weighted_avg_sqrt_cons(sub, "投本比(%)"),
+                "雙法人平均籌碼集中度": weighted_avg_sqrt_cons(sub, "雙法人合佔比(%)"),
+            })
+
+        consensus_group_summary = pd.DataFrame(group_rows)
         return consensus_df, consensus_group_summary
         
     return pd.DataFrame(), pd.DataFrame()

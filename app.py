@@ -9,22 +9,22 @@ import streamlit as st
 
 
 # =========================================================
-# 基本設定
+# 基本設定 (預設開啟寬螢幕)
 # =========================================================
 
 st.set_page_config(
-    page_title="台股強勢策略",
+    page_title="台股市場共識策略",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略")
+st.title("台股市場共識策略 (外資 × 投信 × 成交值)")
 
 DB_FILE = "industry_db.json"
 
 
 # =========================================================
-# 族群資料庫
+# 族群資料庫管理
 # =========================================================
 
 def load_db():
@@ -65,7 +65,7 @@ if "user_industry_map" not in st.session_state:
 
 
 # =========================================================
-# 搜尋
+# 搜尋功能
 # =========================================================
 
 search_query = st.sidebar.text_input(
@@ -75,11 +75,11 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# 取得 TWSE 資料（擴充以計算連續買超天數）
+# 取得 TWSE 資料與計算連續買超天數
 # =========================================================
 
 @st.cache_data(ttl=600)
-def fetch_top100_data():
+def fetch_market_data():
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -98,7 +98,6 @@ def fetch_top100_data():
     curr = datetime.now()
     dates = []
 
-    # 為了計算連續買超，我們多抓取最近 15 個有效交易日
     for i in range(30):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
@@ -119,14 +118,13 @@ def fetch_top100_data():
         time.sleep(0.03)
 
     if len(dates) == 0:
-        return {}, {}, {}, []
+        return {}, {}, {}, [], {}, {}
 
     latest_date = dates[0]
     prev_date = dates[1] if len(dates) > 1 else latest_date
 
-    # 抓取多日的 T86 籌碼對應表
     historical_inst = {}
-    for d_str in dates[:10]: # 取最近 10 天計算連續天數
+    for d_str in dates[:10]:
         target_d = d_str
         t_map = {}
         for _ in range(3):
@@ -164,7 +162,6 @@ def fetch_top100_data():
 
     latest_inst = historical_inst.get(latest_date, {})
 
-    # 計算連續買超天數
     fii_consec_days = {}
     sitc_consec_days = {}
     
@@ -173,23 +170,19 @@ def fetch_top100_data():
         all_codes.update(historical_inst.get(d_str, {}).keys())
 
     for code in all_codes:
-        # 外資連續買超天數計算
         f_days = 0
         for d_str in dates[:10]:
             day_data = historical_inst.get(d_str, {}).get(code, {})
-            val = day_data.get("外資淨買超股數", 0)
-            if val > 0:
+            if day_data.get("外資淨買超股數", 0) > 0:
                 f_days += 1
             else:
                 break
         fii_consec_days[code] = f_days
 
-        # 投信連續買超天數計算
         s_days = 0
         for d_str in dates[:10]:
             day_data = historical_inst.get(d_str, {}).get(code, {})
-            val = day_data.get("投信淨買超股數", 0)
-            if val > 0:
+            if day_data.get("投信淨買超股數", 0) > 0:
                 s_days += 1
             else:
                 break
@@ -260,11 +253,11 @@ def fetch_top100_data():
 
 
 # =========================================================
-# 執行資料取得
+# 讀取資料
 # =========================================================
 
-with st.spinner("⏳ 正在取得最近有效交易日資料與計算連續買超天數..."):
-    today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_top100_data()
+with st.spinner("⏳ 正在重新取得外資、投信與成交值清單..."):
+    today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_market_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
     prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
@@ -272,11 +265,11 @@ with st.spinner("⏳ 正在取得最近有效交易日資料與計算連續買�
 
 if latest_date:
     st.sidebar.markdown("---")
-    st.sidebar.success(f"📅 有效對應交易日：{latest_date} (對比 {prev_date})")
+    st.sidebar.success(f"📅 有效交易日：{latest_date} (對比 {prev_date})")
 
 
 # =========================================================
-# 篩選邏輯與取得清單
+# 取得 TOP 100 清單
 # =========================================================
 
 def get_top_n_amt_codes(m_dict, n=100):
@@ -312,7 +305,7 @@ def get_inst_info(code):
     return latest_inst.get(code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0})
 
 
-def build_group_stats_with_inst(codes_list):
+def build_dataframe_for_codes(codes_list):
     rows = []
     for c in codes_list:
         if c not in today_dict:
@@ -321,9 +314,7 @@ def build_group_stats_with_inst(codes_list):
 
         amt_today = info["成交金額"]
         pct_chg = info["漲跌幅(%)"]
-        
         ind = st.session_state.user_industry_map.get(c, "")
-        
         close_p = info["收盤價"]
         inst_info = get_inst_info(c)
 
@@ -352,9 +343,12 @@ def build_group_stats_with_inst(codes_list):
             "成交值(億)": round(amt_today / 100000000, 2),
         })
 
-    df = pd.DataFrame(rows)
+    return pd.DataFrame(rows)
+
+
+def build_group_summary(df):
     if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
     def weighted_avg_sqrt(sub_df, col_name):
         valid = sub_df[sub_df[col_name] > 0]
@@ -380,32 +374,31 @@ def build_group_stats_with_inst(codes_list):
             "雙法人平均籌碼集中度": weighted_avg_sqrt(sub, "雙法人合佔比(%)"),
         })
 
-    group_summary = pd.DataFrame(group_rows)
-    return df, group_summary
+    summary_df = pd.DataFrame(group_rows)
+    if not summary_df.empty:
+        summary_df = summary_df.sort_values(
+            by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False
+        ).reset_index(drop=True)
+    return summary_df
 
 
-df_amt, grp_amt = build_group_stats_with_inst(amt_top100_codes)
-df_fii, grp_fii = build_group_stats_with_inst(fii_top100_codes)
-df_sitc, grp_sitc = build_group_stats_with_inst(sitc_top100_codes)
-
-if search_query:
-    for d in [df_amt, df_fii, df_sitc]:
-        if not d.empty:
-            match = d["代號"].str.contains(search_query) | d["官方名稱"].str.contains(search_query)
-            d.drop(d.index[~match], inplace=True)
+df_amt = build_dataframe_for_codes(amt_top100_codes)
+df_fii = build_dataframe_for_codes(fii_top100_codes)
+df_sitc = build_dataframe_for_codes(sitc_top100_codes)
 
 
 # =========================================================
-# 市場共識新邏輯：外資 TOP 100 與投信 TOP 100 交叉比對
+# 市場共識邏輯：外資 TOP 100 與投信 TOP 100 交集 且 外本比+投本比 > 0
 # =========================================================
 
-def build_market_consensus_intersection(d_fii, d_sitc):
+def build_market_consensus(d_fii, d_sitc):
     if d_fii.empty or d_sitc.empty:
         return pd.DataFrame(), pd.DataFrame()
         
     fii_codes = set(d_fii["代號"].astype(str))
     sitc_codes = set(d_sitc["代號"].astype(str))
     
+    # 兩者皆有上榜的交集股票
     common_codes = fii_codes.intersection(sitc_codes)
     if not common_codes:
         return pd.DataFrame(), pd.DataFrame()
@@ -414,41 +407,23 @@ def build_market_consensus_intersection(d_fii, d_sitc):
     if consensus_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    def weighted_avg_sqrt_cons(sub_df, col_name):
-        valid = sub_df[sub_df[col_name] > 0]
-        if valid.empty:
-            return 0.0
-        weights = valid["成交值(億)"]
-        if weights.sum() == 0:
-            raw_mean = valid[col_name].mean()
-        else:
-            raw_mean = np.average(valid[col_name], weights=weights)
-        return round(float(np.sqrt(max(0.0, raw_mean))), 3)
+    # 強制過濾：外本比 + 投本比 必須為正數
+    consensus_df = consensus_df[consensus_df["雙法人合佔比(%)"] > 0].copy()
+    if consensus_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
 
-    group_rows = []
-    for g_name, sub in consensus_df.groupby("族群"):
-        total_amt = round(sub["成交值(億)"].sum(), 2)
-        group_rows.append({
-            "族群": g_name,
-            "個股數": len(sub),
-            "總成交值億": total_amt,
-            "外資平均連買日": round(sub["外資連買日"].mean(), 1),
-            "投信平均連買日": round(sub["投信連買日"].mean(), 1),
-            "外本比": weighted_avg_sqrt_cons(sub, "外本比(%)"),
-            "投本比": weighted_avg_sqrt_cons(sub, "投本比(%)"),
-            "雙法人平均籌碼集中度": weighted_avg_sqrt_cons(sub, "雙法人合佔比(%)"),
-        })
+    group_summary = build_group_summary(consensus_df)
+    return consensus_df, group_summary
 
-    consensus_group_summary = pd.DataFrame(group_rows)
-    
-    if not consensus_group_summary.empty:
-        consensus_group_summary = consensus_group_summary.sort_values(
-            by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False
-        ).reset_index(drop=True)
+df_consensus, grp_consensus = build_market_consensus(df_fii, df_sitc)
 
-    return consensus_df, consensus_group_summary
 
-df_consensus, grp_consensus = build_market_consensus_intersection(df_fii, df_sitc)
+# 側邊欄快速搜尋過濾
+if search_query:
+    for d in [df_consensus, df_amt, df_fii, df_sitc]:
+        if not d.empty:
+            match = d["代號"].str.contains(search_query) | d["官方名稱"].str.contains(search_query)
+            d.drop(d.index[~match], inplace=True)
 
 
 def update_map_from_editor(edited_df):
@@ -467,17 +442,18 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 頁籤介面
+# 分頁介面 (預設將 「🎯 市場共識」放在第一位)
 # =========================================================
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🎯 市場共識",
-    "💰 成交值 TOP 100",
     "🌍 外資買超 TOP 100",
     "🏛️ 投信買超 TOP 100",
+    "💰 成交值 TOP 100",
 ])
 
 with tab1:
+    st.markdown("### 🔍 市場共識：外資與投信皆上榜 TOP 100 且 雙本比為正數之交集")
     if not df_consensus.empty:
         if "consensus_group_checks" not in st.session_state:
             st.session_state.consensus_group_checks = {}
@@ -525,23 +501,10 @@ with tab1:
         if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
             update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無同時名列外資與投信買超前 100 名的交集個股。")
+        st.info("目前無符合「外資 TOP100 + 投信 TOP100 + 雙本比為正數」的交集個股。")
 
 with tab2:
-    if not df_amt.empty:
-        ed_amt = st.data_editor(
-            df_amt,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in df_amt.columns if c not in ["族群"]],
-            key="ed_amt_top100",
-        )
-        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
-            update_map_from_editor(ed_amt)
-    else:
-        st.info("目前無符合條件的成交值資料。")
-
-with tab3:
+    st.markdown("### 🌍 外資買超 TOP 100")
     if not df_fii.empty:
         ed_fii = st.data_editor(
             df_fii,
@@ -555,7 +518,8 @@ with tab3:
     else:
         st.info("目前無符合條件的外資買超資料。")
 
-with tab4:
+with tab3:
+    st.markdown("### 🏛️ 投信買超 TOP 100")
     if not df_sitc.empty:
         ed_sitc = st.data_editor(
             df_sitc,
@@ -568,3 +532,18 @@ with tab4:
             update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")
+
+with tab4:
+    st.markdown("### 💰 成交值 TOP 100")
+    if not df_amt.empty:
+        ed_amt = st.data_editor(
+            df_amt,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_amt.columns if c not in ["族群"]],
+            key="ed_amt_top100",
+        )
+        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+            update_map_from_editor(ed_amt)
+    else:
+        st.info("目前無符合條件的成交值資料。")

@@ -76,7 +76,7 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# AI 指標計算邏輯 (yfinance - 三年期區間)
+# AI 指標計算邏輯 (AI-20日通道模型)
 # =========================================================
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -123,7 +123,7 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
     except Exception:
         ref_date = datetime.now()
         
-    start_date = ref_date - timedelta(days=365 * 3 + 60)
+    start_date = ref_date - timedelta(days=120)
     start_str = start_date.strftime("%Y%m%d")
 
     for code in stock_codes:
@@ -132,30 +132,34 @@ def calculate_ai_signals_for_stocks(stock_codes, latest_date_str):
             if len(rows) > 20:
                 df_stock = pd.DataFrame(rows)
                 df_stock["MA20"] = df_stock["Close"].rolling(window=20).mean()
+                df_stock["STD20"] = df_stock["Close"].rolling(window=20).std()
                 
-                lookback = min(len(df_stock), 756)
-                df_stock["Hist_High"] = df_stock["Close"].rolling(window=lookback).max()
-                df_stock["Hist_Low"] = df_stock["Close"].rolling(window=lookback).min()
+                # 模擬 AI-20日模型通道（上下軌）
+                df_stock["Upper_Band"] = df_stock["MA20"] + (2.0 * df_stock["STD20"])
+                df_stock["Lower_Band"] = df_stock["MA20"] - (2.0 * df_stock["STD20"])
                 
-                df_stock["Position_Pct"] = (
-                    (df_stock["Close"] - df_stock["Hist_Low"]) / 
-                    (df_stock["Hist_High"] - df_stock["Hist_Low"] + 1e-8)
+                df_stock["Channel_Pct"] = (
+                    (df_stock["Close"] - df_stock["Lower_Band"]) / 
+                    (df_stock["Upper_Band"] - df_stock["Lower_Band"] + 1e-8)
                 ) * 100
                 
-                lower_th, upper_th = 25.0, 75.0
                 if len(df_stock) >= 2:
-                    curr_pct = df_stock["Position_Pct"].iloc[-1]
-                    prev_pct = df_stock["Position_Pct"].iloc[-2]
+                    curr_p = df_stock["Close"].iloc[-1]
+                    prev_p = df_stock["Close"].iloc[-2]
+                    upper = df_stock["Upper_Band"].iloc[-1]
+                    lower = df_stock["Lower_Band"].iloc[-1]
+                    curr_pct = df_stock["Channel_Pct"].iloc[-1]
+                    prev_pct = df_stock["Channel_Pct"].iloc[-2]
                     
                     if pd.isna(curr_pct):
                         signals_dict[code] = "⚪ 計算中"
-                    elif prev_pct < lower_th and curr_pct >= lower_th:
+                    elif prev_pct < 25 and curr_pct >= 25:
                         signals_dict[code] = "🟢 買進訊號"
-                    elif prev_pct > upper_th and curr_pct <= upper_th:
+                    elif prev_pct > 75 and curr_pct <= 75:
                         signals_dict[code] = "🔴 賣出訊號"
-                    elif curr_pct <= lower_th:
+                    elif curr_p <= lower or curr_pct <= 15:
                         signals_dict[code] = "🟢 處於低檔區"
-                    elif curr_pct >= upper_th:
+                    elif curr_p >= upper or curr_pct >= 85:
                         signals_dict[code] = "🔴 處於高檔區"
                     else:
                         signals_dict[code] = "⚪ 區間震盪"

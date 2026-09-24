@@ -9,7 +9,7 @@ import streamlit as st
 
 
 # =========================================================
-# 基本設定 (預設開啟寬螢幕)
+# 基本設定
 # =========================================================
 
 st.set_page_config(
@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股市場共識策略 (外資 × 投信 × 成交值)")
+st.title("台股強勢策略")
 
 DB_FILE = "industry_db.json"
 
@@ -256,7 +256,7 @@ def fetch_market_data():
 # 讀取資料
 # =========================================================
 
-with st.spinner("⏳ 正在重新取得外資、投信與成交值清單..."):
+with st.spinner("⏳ 正在取得市場資料並計算平滑擴散指標..."):
     today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_market_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
@@ -265,7 +265,7 @@ with st.spinner("⏳ 正在重新取得外資、投信與成交值清單..."):
 
 if latest_date:
     st.sidebar.markdown("---")
-    st.sidebar.success(f"📅 有效交易日：{latest_date} (對比 {prev_date})")
+    st.sidebar.success(f"📅 有效對應交易日：{latest_date}\n(對比 {prev_date})")
 
 
 # =========================================================
@@ -363,10 +363,17 @@ def build_group_summary(df):
 
     group_rows = []
     for g_name, sub in df.groupby("族群"):
+        count_val = len(sub)
+        total_amt = sub["成交值(億)"].sum()
+        
+        # 🔑 擴散指數計算：平方根平滑（個股數 × 總成交值）
+        diffusion_score = round(float(np.sqrt(count_val) * np.sqrt(max(0.0, total_amt))), 2)
+
         group_rows.append({
             "族群": g_name,
-            "個股數": len(sub),
-            "總成交值億": round(sub["成交值(億)"].sum(), 2),
+            "個股數": count_val,
+            "總成交值億": round(total_amt, 2),
+            "族群擴散指數": diffusion_score,
             "外資平均連買日": round(sub["外資連買日"].mean(), 1),
             "投信平均連買日": round(sub["投信連買日"].mean(), 1),
             "外本比": weighted_avg_sqrt(sub, "外本比(%)"),
@@ -377,7 +384,7 @@ def build_group_summary(df):
     summary_df = pd.DataFrame(group_rows)
     if not summary_df.empty:
         summary_df = summary_df.sort_values(
-            by=["雙法人平均籌碼集中度", "總成交值億"], ascending=False
+            by=["族群擴散指數", "雙法人平均籌碼集中度"], ascending=False
         ).reset_index(drop=True)
     return summary_df
 
@@ -388,7 +395,7 @@ df_sitc = build_dataframe_for_codes(sitc_top100_codes)
 
 
 # =========================================================
-# 市場共識邏輯：外資 TOP 100 與投信 TOP 100 交集 且 外本比+投本比 > 0
+# 市場共識邏輯與綜合得分計算
 # =========================================================
 
 def build_market_consensus(d_fii, d_sitc):
@@ -398,7 +405,6 @@ def build_market_consensus(d_fii, d_sitc):
     fii_codes = set(d_fii["代號"].astype(str))
     sitc_codes = set(d_sitc["代號"].astype(str))
     
-    # 兩者皆有上榜的交集股票
     common_codes = fii_codes.intersection(sitc_codes)
     if not common_codes:
         return pd.DataFrame(), pd.DataFrame()
@@ -407,18 +413,27 @@ def build_market_consensus(d_fii, d_sitc):
     if consensus_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
-    # 強制過濾：外本比 + 投本比 必須為正數
     consensus_df = consensus_df[consensus_df["雙法人合佔比(%)"] > 0].copy()
     if consensus_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
     group_summary = build_group_summary(consensus_df)
+
+    group_diff_map = group_summary.set_index("族群")["族群擴散指數"].to_dict()
+    consensus_df["族群擴散指數"] = consensus_df["族群"].map(group_diff_map).fillna(1.0)
+    
+    # 綜合得分公式
+    consensus_df["綜合得分"] = round(
+        np.sqrt(consensus_df["雙法人合佔比(%)"]) * 0.6 + np.sqrt(consensus_df["族群擴散指數"]) * 0.4, 2
+    )
+
+    consensus_df = consensus_df.sort_values(by="綜合得分", ascending=False).reset_index(drop=True)
+
     return consensus_df, group_summary
 
 df_consensus, grp_consensus = build_market_consensus(df_fii, df_sitc)
 
 
-# 側邊欄快速搜尋過濾
 if search_query:
     for d in [df_consensus, df_amt, df_fii, df_sitc]:
         if not d.empty:
@@ -442,18 +457,18 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 分頁介面 (預設將 「🎯 市場共識」放在第一位)
+# 分頁介面
 # =========================================================
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🎯 市場共識",
-    "🌍 外資買超 TOP 100",
-    "🏛️ 投信買超 TOP 100",
     "💰 成交值 TOP 100",
+    "🌍 外資買超 TOP 100",
+    "🏛️ 投信",
 ])
 
 with tab1:
-    st.markdown("### 🔍 市場共識：外資與投信皆上榜 TOP 100 且 雙本比為正數之交集")
+    st.markdown("### 🔍 市場共識：雙法人交集 × 族群擴散指數評分")
     if not df_consensus.empty:
         if "consensus_group_checks" not in st.session_state:
             st.session_state.consensus_group_checks = {}
@@ -466,7 +481,7 @@ with tab1:
                 
             row_dict = r.to_dict()
             row_dict["選擇"] = st.session_state.consensus_group_checks[g_name]
-            cols_order = ["選擇", "族群"] + [c for c in r.index if c != "族群"]
+            cols_order = ["選擇", "族群", "族群擴散指數"] + [c for c in r.index if c not in ["族群", "族群擴散指數"]]
             editor_grp_data.append({k: row_dict[k] for k in cols_order if k in row_dict})
 
         df_grp_editable = pd.DataFrame(editor_grp_data)
@@ -501,49 +516,31 @@ with tab1:
         if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
             update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無符合「外資 TOP100 + 投信 TOP100 + 雙本比為正數」的交集個股。")
+        st.info("目前無符合條件的交集個股。")
 
 with tab2:
+    st.markdown("### 💰 成交值 TOP 100")
+    if not df_amt.empty:
+        ed_amt = st.data_editor(df_amt, use_container_width=True, hide_index=True, disabled=[c for c in df_amt.columns if c not in ["族群"]], key="ed_amt_top100")
+        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+            update_map_from_editor(ed_amt)
+    else:
+        st.info("目前無符合條件的成交值資料。")
+
+with tab3:
     st.markdown("### 🌍 外資買超 TOP 100")
     if not df_fii.empty:
-        ed_fii = st.data_editor(
-            df_fii,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in df_fii.columns if c not in ["族群"]],
-            key="ed_fii_top100",
-        )
+        ed_fii = st.data_editor(df_fii, use_container_width=True, hide_index=True, disabled=[c for c in df_fii.columns if c not in ["族群"]], key="ed_fii_top100")
         if st.button("💾 儲存外資買超族群修改", key="btn_save_fii"):
             update_map_from_editor(ed_fii)
     else:
         st.info("目前無符合條件的外資買超資料。")
 
-with tab3:
+with tab4:
     st.markdown("### 🏛️ 投信買超 TOP 100")
     if not df_sitc.empty:
-        ed_sitc = st.data_editor(
-            df_sitc,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in df_sitc.columns if c not in ["族群"]],
-            key="ed_sitc_top100",
-        )
+        ed_sitc = st.data_editor(df_sitc, use_container_width=True, hide_index=True, disabled=[c for c in df_sitc.columns if c not in ["族群"]], key="ed_sitc_top100")
         if st.button("💾 儲存投信買超族群修改", key="btn_save_sitc"):
             update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")
-
-with tab4:
-    st.markdown("### 💰 成交值 TOP 100")
-    if not df_amt.empty:
-        ed_amt = st.data_editor(
-            df_amt,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in df_amt.columns if c not in ["族群"]],
-            key="ed_amt_top100",
-        )
-        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
-            update_map_from_editor(ed_amt)
-    else:
-        st.info("目前無符合條件的成交值資料。")

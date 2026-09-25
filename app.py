@@ -63,9 +63,6 @@ def save_db(db_data):
 if "user_industry_map" not in st.session_state:
     st.session_state.user_industry_map = load_db()
 
-if "consensus_group_checks" not in st.session_state:
-    st.session_state.consensus_group_checks = {}
-
 
 # =========================================================
 # 搜尋功能
@@ -576,11 +573,11 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
-        "依照策略順序：先看上方『雙法人共同擴散』確認市場資金與族群熱度，"
-        "再透過下方的下拉選單直接勾選族群，即可連動檢視對應的個股！"
+        "請直接在下方各族群名稱旁邊的方框打勾，勾選後即可於下方直接展開該族群的個股清單！"
     )
 
     if not grp_common.empty:
+        # 顯示上方列表
         st.dataframe(
             grp_common,
             use_container_width=True,
@@ -588,18 +585,22 @@ with tab1:
         )
 
         st.markdown("---")
-        st.markdown("#### 🎯 依族群勾選檢視個股")
+        st.markdown("#### 🎯 族群清單與個股明細")
         
-        # 取得所有族群清單
-        all_group_names = grp_common["族群"].tolist()
+        # 在上方列表下方，直接列出每個族群的名稱與勾選框
+        all_groups = grp_common["族群"].tolist()
         
-        # 使用下拉多選框（點擊後會出現選單，可勾選多個族群）
-        selected_groups = st.multiselect(
-            "請選擇或搜尋想檢視的族群（可複選）：",
-            options=all_group_names,
-            key="multiselect_common_groups"
-        )
-        
+        selected_groups = []
+        # 以一列放多個勾選框（或逐行排列）讓使用者直接在族群名稱旁打勾
+        cols = st.columns(min(len(all_groups), 4) if len(all_groups) > 0 else 1)
+        for idx, g_name in enumerate(all_groups):
+            col_idx = idx % len(cols)
+            with cols[col_idx]:
+                if st.checkbox(f"{g_name}", key=f"chk_grp_{g_name}"):
+                    selected_groups.append(g_name)
+
+        st.markdown("---")
+
         if not df_fii.empty and not df_sitc.empty:
             fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
             sitc_ratio_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()
@@ -615,7 +616,7 @@ with tab1:
                 else:
                     st.info("所選族群中目前沒有符合條件的個股資料。")
             else:
-                st.caption("👆 請點擊上方框框並勾選族群，即可在此處展開對應的個股清單。")
+                st.caption("👆 請勾選上方族群名稱旁邊的方框，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
 

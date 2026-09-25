@@ -577,18 +577,27 @@ with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
         "依照策略順序：先看『雙法人共同擴散』確認市場資金與族群熱度，"
-        "再向下勾選有興趣的族群挑選個股！"
+        "再直接從下方表格的族群名稱旁勾選，即可連動檢視個股！"
     )
 
     if not grp_common.empty:
-        st.dataframe(
-            grp_common,
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.markdown("#### 📁 族群共同擴散總覽與勾選")
+        
+        if "selected_common_groups" not in st.session_state:
+            st.session_state.selected_common_groups = []
+
+        selected_groups = []
+        cols_checkbox = st.columns(3)
+        for idx, row in grp_common.iterrows():
+            g_name = row["族群"]
+            temp_val = row["雙法人共同溫度"]
+            col_target = cols_checkbox[idx % 3]
+            with col_target:
+                if st.checkbox(f"{g_name} (溫度: {temp_val})", key=f"chk_inline_grp_{idx}"):
+                    selected_groups.append(g_name)
 
         st.markdown("---")
-        st.markdown("#### 🎯 互動選股：勾選族群以檢視個股")
+        st.markdown("#### 🎯 勾選族群對應的個股清單")
         
         if not df_fii.empty and not df_sitc.empty:
             fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
@@ -596,25 +605,16 @@ with tab1:
             fii_temp["投本比(%)"] = fii_temp["代號"].map(sitc_ratio_map).fillna(0.0)
             fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)
             
-            selected_groups = []
-            cols_checkbox = st.columns(3)
-            
-            for idx, g_name in enumerate(grp_common["族群"].tolist()):
-                col_target = cols_checkbox[idx % 3]
-                with col_target:
-                    if st.checkbox(f"📁 {g_name}", key=f"chk_grp_{idx}"):
-                        selected_groups.append(g_name)
-            
             if selected_groups:
-                st.markdown(f"**目前選取的族群：** `{', '.join(selected_groups)}`")
                 filtered_stocks = fii_temp[fii_temp["族群"].isin(selected_groups)].sort_values(by="雙法人合佔比(%)", ascending=False)
                 
                 if not filtered_stocks.empty:
+                    st.success(f"目前顯示已勾選族群：`{', '.join(selected_groups)}` 的個股")
                     st.dataframe(filtered_stocks, use_container_width=True, hide_index=True)
                 else:
                     st.info("所選族群中目前沒有符合條件的個股資料。")
             else:
-                st.caption("👆 請在上方勾選一個或多個族群方框，即可展開對應的個股清單。")
+                st.caption("👆 請在上方各族群名稱旁勾選方框，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
 

@@ -576,28 +576,29 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
-        "依照策略順序：先看『雙法人共同擴散』確認市場資金與族群熱度，"
-        "再直接從下方表格的族群名稱旁勾選，即可連動檢視個股！"
+        "依照策略順序：先看上方『雙法人共同擴散』確認市場資金與族群熱度，"
+        "再透過下方的下拉選單直接勾選族群，即可連動檢視對應的個股！"
     )
 
     if not grp_common.empty:
-        st.markdown("#### 📁 族群共同擴散總覽與勾選")
-        
-        if "selected_common_groups" not in st.session_state:
-            st.session_state.selected_common_groups = []
-
-        selected_groups = []
-        cols_checkbox = st.columns(3)
-        for idx, row in grp_common.iterrows():
-            g_name = row["族群"]
-            temp_val = row["雙法人共同溫度"]
-            col_target = cols_checkbox[idx % 3]
-            with col_target:
-                if st.checkbox(f"{g_name} (溫度: {temp_val})", key=f"chk_inline_grp_{idx}"):
-                    selected_groups.append(g_name)
+        st.dataframe(
+            grp_common,
+            use_container_width=True,
+            hide_index=True,
+        )
 
         st.markdown("---")
-        st.markdown("#### 🎯 勾選族群對應的個股清單")
+        st.markdown("#### 🎯 依族群勾選檢視個股")
+        
+        # 取得所有族群清單
+        all_group_names = grp_common["族群"].tolist()
+        
+        # 使用下拉多選框（點擊後會出現選單，可勾選多個族群）
+        selected_groups = st.multiselect(
+            "請選擇或搜尋想檢視的族群（可複選）：",
+            options=all_group_names,
+            key="multiselect_common_groups"
+        )
         
         if not df_fii.empty and not df_sitc.empty:
             fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
@@ -614,7 +615,7 @@ with tab1:
                 else:
                     st.info("所選族群中目前沒有符合條件的個股資料。")
             else:
-                st.caption("👆 請在上方各族群名稱旁勾選方框，即可在此處展開對應的個股清單。")
+                st.caption("👆 請點擊上方框框並勾選族群，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
 

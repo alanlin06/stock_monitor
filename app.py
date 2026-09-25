@@ -573,11 +573,30 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
-        "請直接在下方各族群名稱旁邊的方框打勾，勾選後即可於下方直接展開該族群的個股清單！"
+        "請直接在下方『雙法人共同擴散』列表的每一個族群名稱旁邊打勾，勾選後下方即會直接顯示該族群的個股明細！"
     )
 
     if not grp_common.empty:
-        # 顯示上方列表
+        all_groups = grp_common["族群"].tolist()
+        
+        # 在列表上方（或表格每一列旁邊）製作勾選介面：
+        # 這裡直接在表格上方建立緊密的核取方塊，讓使用者直接在族群名稱旁打勾
+        st.markdown("#### 🎯 族群點選清單")
+        selected_groups = []
+        
+        # 用多欄排版把勾選方塊與族群名稱並排呈現
+        cols_per_row = 4
+        group_chunks = [all_groups[i:i + cols_per_row] for i in range(0, len(all_groups), cols_per_row)]
+        
+        for chunk in group_chunks:
+            cols = st.columns(cols_per_row)
+            for idx, g_name in enumerate(chunk):
+                with cols[idx]:
+                    if st.checkbox(f"{g_name}", key=f"inline_chk_{g_name}"):
+                        selected_groups.append(g_name)
+
+        st.markdown("---")
+        st.markdown("#### 📊 雙法人共同擴散總表")
         st.dataframe(
             grp_common,
             use_container_width=True,
@@ -585,21 +604,7 @@ with tab1:
         )
 
         st.markdown("---")
-        st.markdown("#### 🎯 族群清單與個股明細")
-        
-        # 在上方列表下方，直接列出每個族群的名稱與勾選框
-        all_groups = grp_common["族群"].tolist()
-        
-        selected_groups = []
-        # 以一列放多個勾選框（或逐行排列）讓使用者直接在族群名稱旁打勾
-        cols = st.columns(min(len(all_groups), 4) if len(all_groups) > 0 else 1)
-        for idx, g_name in enumerate(all_groups):
-            col_idx = idx % len(cols)
-            with cols[col_idx]:
-                if st.checkbox(f"{g_name}", key=f"chk_grp_{g_name}"):
-                    selected_groups.append(g_name)
-
-        st.markdown("---")
+        st.markdown("#### 🎯 勾選族群的個股明細")
 
         if not df_fii.empty and not df_sitc.empty:
             fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
@@ -616,7 +621,7 @@ with tab1:
                 else:
                     st.info("所選族群中目前沒有符合條件的個股資料。")
             else:
-                st.caption("👆 請勾選上方族群名稱旁邊的方框，即可在此處展開對應的個股清單。")
+                st.caption("👆 請在上方各族群名稱旁打勾，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
 

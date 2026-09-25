@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略 (籌碼擴散與溫度計模型)")
+st.title("台股強勢策略")
 
 DB_FILE = "industry_db.json"
 
@@ -573,35 +573,24 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
-        "請直接在下方『雙法人共同擴散』列表的每一個族群名稱旁邊打勾，勾選後下方即會直接顯示該族群的個股明細！"
+        "請直接在下方『雙法人共同擴散總表』最左側的勾選欄位中點選您想檢視的族群，下方即會立即連動顯示該族群的個股明細！"
     )
 
     if not grp_common.empty:
-        all_groups = grp_common["族群"].tolist()
-        
-        # 在列表上方（或表格每一列旁邊）製作勾選介面：
-        # 這裡直接在表格上方建立緊密的核取方塊，讓使用者直接在族群名稱旁打勾
-        st.markdown("#### 🎯 族群點選清單")
-        selected_groups = []
-        
-        # 用多欄排版把勾選方塊與族群名稱並排呈現
-        cols_per_row = 4
-        group_chunks = [all_groups[i:i + cols_per_row] for i in range(0, len(all_groups), cols_per_row)]
-        
-        for chunk in group_chunks:
-            cols = st.columns(cols_per_row)
-            for idx, g_name in enumerate(chunk):
-                with cols[idx]:
-                    if st.checkbox(f"{g_name}", key=f"inline_chk_{g_name}"):
-                        selected_groups.append(g_name)
+        # 在總表 DataFrame 中加入一欄「選取」布林值，讓每一列族群名稱旁邊都有勾選框
+        display_df = grp_common.copy()
+        display_df.insert(0, "選取", False)
 
-        st.markdown("---")
-        st.markdown("#### 📊 雙法人共同擴散總表")
-        st.dataframe(
-            grp_common,
+        edited_grp_common = st.data_editor(
+            display_df,
             use_container_width=True,
             hide_index=True,
+            disabled=[c for c in display_df.columns if c != "選取"],
+            key="ed_common_group_selection",
         )
+
+        # 抓出被勾選的族群名稱
+        selected_groups = edited_grp_common[edited_grp_common["選取"] == True]["族群"].tolist()
 
         st.markdown("---")
         st.markdown("#### 🎯 勾選族群的個股明細")
@@ -621,7 +610,7 @@ with tab1:
                 else:
                     st.info("所選族群中目前沒有符合條件的個股資料。")
             else:
-                st.caption("👆 請在上方各族群名稱旁打勾，即可在此處展開對應的個股清單。")
+                st.caption("👆 請在上方『雙法人共同擴散總表』左側勾選您想檢視的族群，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
 

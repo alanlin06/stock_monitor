@@ -350,112 +350,221 @@ def build_dataframe_for_codes(codes_list):
 
 
 # =========================================================
-# 升級版族群籌碼擴散與溫度計模型計算
+# 族群籌碼擴散、法人強度與市場注意力模型
 # =========================================================
 
-def build_group_summary(df):
+def build_group_summary(df, investor="外資"):
+    """
+    單一法人族群雷達：
+    1. 只使用該法人 Top100 中、且本比 > 0 的股票計算正向籌碼。
+    2. 擴散度 = 正本比股票數 / 該 dataframe 中該族群股票數。
+    3. √強度 = 正本比的 sqrt 平均值，降低單一極端值影響。
+    4. 成交值獨立作為市場注意力，不直接拿來加權本比。
+    """
     if df.empty:
         return pd.DataFrame()
 
+    ratio_col = "外本比(%)" if investor == "外資" else "投本比(%)"
     group_rows = []
-    for g_name, sub in df.groupby("族群"):
-        total_stocks_in_group = len(sub)
-        total_amt = sub["成交值(億)"].sum()
 
-        # 1. 擴散度 (Diffusion)：外本比 / 投本比 > 0 的股票數與佔比
-        fii_positive_sub = sub[sub["外本比(%)"] > 0]
-        sitc_positive_sub = sub[sub["投本比(%)"] > 0]
-        
-        fii_diffusion_count = len(fii_positive_sub)
-        sitc_diffusion_count = len(sitc_positive_sub)
-        
-        # 雙法人共同擴散（兩者皆 > 0）
-        common_positive_sub = sub[(sub["外本比(%)"] > 0) & (sub["投本比(%)"] > 0)]
-        common_diffusion_count = len(common_positive_sub)
+    for g_name, sub in df.groupby("族群", dropna=False):
+        total_stocks = len(sub)
+        positive = sub[sub[ratio_col] > 0].copy()
 
-        # 2. 根號強度 (Strength) 搭配成交值權重進行非線性壓縮
-        def get_weighted_sqrt_strength(valid_sub, col_name):
-            if valid_sub.empty:
-                return 0.0
-            vals = np.sqrt(valid_sub[col_name].values)
-            weights = valid_sub["成交值(億)"].values
-            if weights.sum() == 0:
-                return float(vals.mean())
-            return float(np.average(vals, weights=weights))
+        positive_count = len(positive)
+        diffusion = positive_count / total_stocks if total_stocks > 0 else 0.0
 
-        fii_strength = round(get_weighted_sqrt_strength(fii_positive_sub, "外本比(%)"), 3)
-        sitc_strength = round(get_weighted_sqrt_strength(sitc_positive_sub, "投本比(%)"), 3)
+        # 根號壓縮：避免單一股票極端本比把族群強度拉爆
+        if positive_count > 0:
+            sqrt_values = np.sqrt(positive[ratio_col].clip(lower=0))
+            sqrt_strength_mean = float(sqrt_values.mean())
+            sqrt_strength_sum = float(sqrt_values.sum())
+            ratio_median = float(positive[ratio_col].median())
+        else:
+            sqrt_strength_mean = 0.0
+            sqrt_strength_sum = 0.0
+            ratio_median = 0.0
 
-        # 3. 族群資金溫度計綜合得分：擴散度 × 根號強度 × 成交值權重開根號
-        # 避免單一股票數值過大拉歪整體，透過非線性壓縮呈現真實族群熱度
-        market_attention_factor = np.sqrt(max(0.0, total_amt))
-        group_temperature = round((fii_diffusion_count * fii_strength + sitc_diffusion_count * sitc_strength) * 0.5 * (1 + 0.1 * market_attention_factor), 2)
+        total_amt = float(sub["成交值(億)"].sum())
+        avg_amt = total_amt / total_stocks if total_stocks else 0.0
+
+        # 市場注意力：使用 log1p 壓縮成交值尺度，避免大型族群完全壟斷
+        market_attention = float(np.log1p(max(total_amt, 0.0)))
+
+        # 族群溫度：
+        # 擴散度（0~1） × sqrt 強度 × 市場注意力
+        # 再乘上 10 方便閱讀
+        temperature = diffusion * sqrt_strength_mean * market_attention * 10.0
 
         group_rows.append({
             "族群": g_name,
-            "追蹤個股數": total_stocks_in_group,
-            "外資擴散數": fii_diffusion_count,
-            "投信擴散數": sitc_diffusion_count,
-            "雙法人共同擴散": common_diffusion_count,
+            "追蹤個股數": total_stocks,
+            f"{investor}正向數": positive_count,
+            f"{investor}擴散度(%)": round(diffusion * 100, 1),
+            f"{investor}√強度": round(sqrt_strength_mean, 3),
+            f"{investor}√強度總和": round(sqrt_strength_sum, 3),
+            f"{investor}本比中位數(%)": round(ratio_median, 3),
             "總成交值億": round(total_amt, 2),
-            "外資√強度": fii_strength,
-            "投信√強度": sitc_strength,
-            "族群資金溫度計": group_temperature,
-            "外資平均連買日": round(sub["外資連買日"].mean(), 1),
-            "投信平均連買日": round(sub["投信連買日"].mean(), 1),
+            "平均成交值億": round(avg_amt, 2),
+            "市場注意力": round(market_attention, 3),
+            f"{investor}族群溫度": round(temperature, 2),
+            "平均漲跌幅(%)": round(sub["漲跌幅(%)"].mean(), 2),
+            f"{investor}平均連買日": round(
+                sub[f"{investor}連買日"].mean(), 1
+            ),
         })
 
-    summary_df = pd.DataFrame(group_rows)
-    if not summary_df.empty:
-        summary_df = summary_df.sort_values(
-            by=["族群資金溫度計", "總成交值億"], ascending=False
-        ).reset_index(drop=True)
-    return summary_df
+    result = pd.DataFrame(group_rows)
 
+    if not result.empty:
+        result = result.sort_values(
+            by=[f"{investor}族群溫度", f"{investor}擴散度(%)", "總成交值億"],
+            ascending=False
+        ).reset_index(drop=True)
+
+    return result
+
+
+def build_common_group_summary(d_fii, d_sitc):
+    """
+    雙法人共同族群擴散：
+    不限制外資/投信各自的族群雷達；
+    只在最後額外觀察兩者共同正向的股票。
+    """
+    if d_fii.empty or d_sitc.empty:
+        return pd.DataFrame()
+
+    fii = d_fii[["代號", "族群", "外本比(%)", "成交值(億)"]].copy()
+    sitc = d_sitc[["代號", "投本比(%)"]].copy()
+
+    merged = fii.merge(sitc, on="代號", how="inner")
+    if merged.empty:
+        return pd.DataFrame()
+
+    rows = []
+
+    for g_name, sub in merged.groupby("族群", dropna=False):
+        fii_positive = sub[sub["外本比(%)"] > 0]
+        sitc_positive = sub[sub["投本比(%)"] > 0]
+        common = sub[(sub["外本比(%)"] > 0) & (sub["投本比(%)"] > 0)]
+
+        total = len(sub)
+        common_count = len(common)
+
+        common_diffusion = common_count / total if total else 0.0
+
+        if common_count:
+            fii_sqrt = np.sqrt(common["外本比(%)"].clip(lower=0))
+            sitc_sqrt = np.sqrt(common["投本比(%)"].clip(lower=0))
+            common_strength = float(((fii_sqrt + sitc_sqrt) / 2).mean())
+        else:
+            common_strength = 0.0
+
+        total_amt = float(sub["成交值(億)"].sum())
+        attention = float(np.log1p(max(total_amt, 0.0)))
+
+        temperature = common_diffusion * common_strength * attention * 10.0
+
+        rows.append({
+            "族群": g_name,
+            "共同追蹤個股數": total,
+            "外資正向數": len(fii_positive),
+            "投信正向數": len(sitc_positive),
+            "雙法人共同數": common_count,
+            "共同擴散度(%)": round(common_diffusion * 100, 1),
+            "共同√強度": round(common_strength, 3),
+            "總成交值億": round(total_amt, 2),
+            "市場注意力": round(attention, 3),
+            "雙法人共同溫度": round(temperature, 2),
+        })
+
+    result = pd.DataFrame(rows)
+
+    if not result.empty:
+        result = result.sort_values(
+            by=["雙法人共同溫度", "共同擴散度(%)", "總成交值億"],
+            ascending=False
+        ).reset_index(drop=True)
+
+    return result
+
+
+# =========================================================
+# 產生各法人個股資料
+# =========================================================
 
 df_amt = build_dataframe_for_codes(amt_top100_codes)
 df_fii = build_dataframe_for_codes(fii_top100_codes)
 df_sitc = build_dataframe_for_codes(sitc_top100_codes)
 
+# 外資 / 投信各自的族群雷達
+grp_fii = build_group_summary(df_fii, "外資")
+grp_sitc = build_group_summary(df_sitc, "投信")
+
+# 雙法人共同擴散，作為額外觀察，不反過來限制單一法人雷達
+grp_common = build_common_group_summary(df_fii, df_sitc)
+
 
 # =========================================================
-# 市場共識邏輯與綜合得分計算
+# 市場共識邏輯與個股綜合觀察
 # =========================================================
 
-def build_market_consensus(d_fii, d_sitc):
+def build_market_consensus(d_fii, d_sitc, common_groups):
     if d_fii.empty or d_sitc.empty:
-        return pd.DataFrame(), pd.DataFrame()
-        
+        return pd.DataFrame()
+
     fii_codes = set(d_fii["代號"].astype(str))
     sitc_codes = set(d_sitc["代號"].astype(str))
-    
     common_codes = fii_codes.intersection(sitc_codes)
+
     if not common_codes:
-        return pd.DataFrame(), pd.DataFrame()
-        
-    consensus_df = d_fii[d_fii["代號"].astype(str).isin(common_codes)].copy()
+        return pd.DataFrame()
+
+    # 只有最後的「共識個股」才取交集
+    consensus_df = d_fii[
+        d_fii["代號"].astype(str).isin(common_codes)
+    ].copy()
+
     if consensus_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
-    consensus_df = consensus_df[consensus_df["雙法人合佔比(%)"] > 0].copy()
+    # 必須至少一邊法人本比為正
+    sitc_ratio_map = d_sitc.set_index("代號")["投本比(%)"].to_dict()
+    consensus_df["投本比(%)"] = consensus_df["代號"].map(sitc_ratio_map).fillna(0.0)
+
+    consensus_df["雙法人合佔比(%)"] = (
+        consensus_df["外本比(%)"] + consensus_df["投本比(%)"]
+    ).round(3)
+
+    consensus_df = consensus_df[
+        consensus_df["雙法人合佔比(%)"] > 0
+    ].copy()
+
     if consensus_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
-    group_summary = build_group_summary(consensus_df)
-
-    group_temp_map = group_summary.set_index("族群")["族群資金溫度計"].to_dict()
-    consensus_df["族群資金溫度計"] = consensus_df["族群"].map(group_temp_map).fillna(1.0)
-    
-    # 綜合得分公式：結合個股籌碼強度與所屬族群資金溫度計
-    consensus_df["綜合得分"] = round(
-        np.sqrt(consensus_df["雙法人合佔比(%)"]) * 0.6 + np.sqrt(consensus_df["族群資金溫度計"]) * 0.4, 2
+    common_temp_map = (
+        common_groups.set_index("族群")["雙法人共同溫度"].to_dict()
+        if not common_groups.empty else {}
     )
 
-    consensus_df = consensus_df.sort_values(by="綜合得分", ascending=False).reset_index(drop=True)
+    consensus_df["雙法人共同溫度"] = (
+        consensus_df["族群"].map(common_temp_map).fillna(0.0)
+    )
 
-    return consensus_df, group_summary
+    consensus_df["綜合得分"] = round(
+        np.sqrt(consensus_df["雙法人合佔比(%)"].clip(lower=0)) * 0.6
+        + np.sqrt(consensus_df["雙法人共同溫度"].clip(lower=0)) * 0.4,
+        2
+    )
 
-df_consensus, grp_consensus = build_market_consensus(df_fii, df_sitc)
+    return consensus_df.sort_values(
+        by=["綜合得分", "雙法人合佔比(%)"],
+        ascending=False
+    ).reset_index(drop=True)
+
+
+df_consensus = build_market_consensus(df_fii, df_sitc, grp_common)
 
 
 if search_query:
@@ -484,88 +593,168 @@ def update_map_from_editor(edited_df):
 # 分頁介面
 # =========================================================
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🎯 市場共識與族群溫度計",
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🔥 雙法人共識",
+    "🌍 外資族群雷達",
+    "🏛️ 投信族群雷達",
+    "🤝 雙法人共同擴散",
     "💰 成交值 TOP 100",
-    "🌍 外資買超 TOP 100",
-    "🏛️ 投信買超 TOP 100",
+    "📋 法人個股 TOP 100",
 ])
 
 with tab1:
-    st.markdown("### 🔍 族群資金溫度計排行與雙法人共識")
-    st.info("💡 透過【擴散度 × 根號強度】模型，有效防止單一飆股（妖股）直接拉高整個族群排名。")
-    
-    if not grp_consensus.empty:
-        editor_grp_data = []
-        for _, r in grp_consensus.iterrows():
-            g_name = r["族群"]
-            
-            if g_name not in st.session_state.consensus_group_checks:
-                st.session_state.consensus_group_checks[g_name] = True  # 預設全選方便檢視
-                
-            row_dict = r.to_dict()
-            row_dict["選擇"] = st.session_state.consensus_group_checks[g_name]
-            cols_order = ["選擇", "族群", "族群資金溫度計"] + [c for c in r.index if c not in ["族群", "族群資金溫度計"]]
-            editor_grp_data.append({k: row_dict[k] for k in cols_order if k in row_dict})
+    st.markdown("### 🔥 雙法人共識")
+    st.info(
+        "外資與投信各自獨立計算族群擴散；本頁只在最後觀察兩法人共同正向的個股，"
+        "避免單一法人剛開始擴散時被另一法人尚未進場而過早排除。"
+    )
 
-        df_grp_editable = pd.DataFrame(editor_grp_data)
-
-        edited_grp_df = st.data_editor(
-            df_grp_editable,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in df_grp_editable.columns if c != "選擇"],
-            key="ed_consensus_group_table",
-        )
-
-        active_groups = []
-        for _, row in edited_grp_df.iterrows():
-            g_name = row["族群"]
-            is_sel = bool(row["選擇"])
-            st.session_state.consensus_group_checks[g_name] = is_sel
-            if is_sel:
-                active_groups.append(g_name)
-
-        st.markdown("---")
-        st.markdown("### 📊 符合條件的共識個股明細")
-        
-        filtered_consensus = df_consensus[df_consensus["族群"].isin(active_groups)] if active_groups else df_consensus.iloc[0:0]
-
+    if not df_consensus.empty:
         ed_consensus = st.data_editor(
-            filtered_consensus,
+            df_consensus,
             use_container_width=True,
             hide_index=True,
-            disabled=[c for c in filtered_consensus.columns if c not in ["族群"]],
+            disabled=[c for c in df_consensus.columns if c not in ["族群"]],
             key="ed_consensus_top100",
         )
-        if st.button("💾 儲存市場共識族群修改", key="btn_save_consensus"):
+
+        if st.button("💾 儲存雙法人共識族群修改", key="btn_save_consensus"):
             update_map_from_editor(ed_consensus)
     else:
-        st.info("目前無符合條件的交集個股。")
+        st.info("目前無符合條件的雙法人共識個股。")
+
 
 with tab2:
+    st.markdown("### 🌍 外資族群雷達")
+    st.caption(
+        "資料來源：外資買超 TOP 100；只把外本比 > 0 的股票視為正向籌碼。"
+    )
+
+    if not grp_fii.empty:
+        st.dataframe(
+            grp_fii,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("#### 外資族群正向個股")
+        positive_fii = df_fii[df_fii["外本比(%)"] > 0].copy()
+
+        if not positive_fii.empty:
+            ed_fii_positive = st.data_editor(
+                positive_fii,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in positive_fii.columns if c not in ["族群"]],
+                key="ed_fii_positive",
+            )
+
+            if st.button("💾 儲存外資族群修改", key="btn_save_fii"):
+                update_map_from_editor(ed_fii_positive)
+        else:
+            st.info("目前外資 TOP 100 中沒有外本比 > 0 的資料。")
+    else:
+        st.info("目前無外資族群資料。")
+
+
+with tab3:
+    st.markdown("### 🏛️ 投信族群雷達")
+    st.caption(
+        "資料來源：投信買超 TOP 100；只把投本比 > 0 的股票視為正向籌碼。"
+    )
+
+    if not grp_sitc.empty:
+        st.dataframe(
+            grp_sitc,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("#### 投信族群正向個股")
+        positive_sitc = df_sitc[df_sitc["投本比(%)"] > 0].copy()
+
+        if not positive_sitc.empty:
+            ed_sitc_positive = st.data_editor(
+                positive_sitc,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in positive_sitc.columns if c not in ["族群"]],
+                key="ed_sitc_positive",
+            )
+
+            if st.button("💾 儲存投信族群修改", key="btn_save_sitc"):
+                update_map_from_editor(ed_sitc_positive)
+        else:
+            st.info("目前投信 TOP 100 中沒有投本比 > 0 的資料。")
+    else:
+        st.info("目前無投信族群資料。")
+
+
+with tab4:
+    st.markdown("### 🤝 雙法人共同擴散")
+    st.info(
+        "這裡看的是同一族群中，外本比與投本比同時 > 0 的股票比例。"
+        "它是額外確認指標，不會限制外資或投信各自的族群雷達。"
+    )
+
+    if not grp_common.empty:
+        st.dataframe(
+            grp_common,
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("目前沒有雙法人共同擴散資料。")
+
+
+with tab5:
     st.markdown("### 💰 成交值 TOP 100")
+    st.caption(
+        "成交值不直接決定法人籌碼強度；在族群雷達中作為『市場注意力』的獨立確認因子。"
+    )
+
     if not df_amt.empty:
-        ed_amt = st.data_editor(df_amt, use_container_width=True, hide_index=True, disabled=[c for c in df_amt.columns if c not in ["族群"]], key="ed_amt_top100")
+        ed_amt = st.data_editor(
+            df_amt,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_amt.columns if c not in ["族群"]],
+            key="ed_amt_top100",
+        )
+
         if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
             update_map_from_editor(ed_amt)
     else:
         st.info("目前無符合條件的成交值資料。")
 
-with tab3:
-    st.markdown("### 🌍 外資買超 TOP 100")
+
+with tab6:
+    st.markdown("### 📋 法人個股 TOP 100")
+
+    st.markdown("#### 🌍 外資買超 TOP 100")
     if not df_fii.empty:
-        ed_fii = st.data_editor(df_fii, use_container_width=True, hide_index=True, disabled=[c for c in df_fii.columns if c not in ["族群"]], key="ed_fii_top100")
-        if st.button("💾 儲存外資買超族群修改", key="btn_save_fii"):
+        ed_fii = st.data_editor(
+            df_fii,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_fii.columns if c not in ["族群"]],
+            key="ed_fii_top100",
+        )
+        if st.button("💾 儲存外資個股族群修改", key="btn_save_fii_top100"):
             update_map_from_editor(ed_fii)
     else:
         st.info("目前無符合條件的外資買超資料。")
 
-with tab4:
-    st.markdown("### 🏛️ 投信買超 TOP 100")
+    st.markdown("#### 🏛️ 投信買超 TOP 100")
     if not df_sitc.empty:
-        ed_sitc = st.data_editor(df_sitc, use_container_width=True, hide_index=True, disabled=[c for c in df_sitc.columns if c not in ["族群"]], key="ed_sitc_top100")
-        if st.button("💾 儲存投信買超族群修改", key="btn_save_sitc"):
+        ed_sitc = st.data_editor(
+            df_sitc,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_sitc.columns if c not in ["族群"]],
+            key="ed_sitc_top100",
+        )
+        if st.button("💾 儲存投信個股族群修改", key="btn_save_sitc_top100"):
             update_map_from_editor(ed_sitc)
     else:
         st.info("目前無符合條件的投信買超資料。")

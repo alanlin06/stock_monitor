@@ -561,7 +561,7 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 分頁介面（已將「雙法人共同擴散」調整至最前面）
+# 分頁介面
 # =========================================================
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -576,12 +576,11 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
     st.info(
-        "依照建議順序：先看『雙法人共同擴散』確認市場資金與族群熱度，"
+        "依照策略順序：先看『雙法人共同擴散』確認市場資金與族群熱度，"
         "再向下勾選有興趣的族群挑選個股！"
     )
 
     if not grp_common.empty:
-        # 顯示總覽表
         st.dataframe(
             grp_common,
             use_container_width=True,
@@ -591,14 +590,12 @@ with tab1:
         st.markdown("---")
         st.markdown("#### 🎯 互動選股：勾選族群以檢視個股")
         
-        # 建立合併個股資料以供過濾
         if not df_fii.empty and not df_sitc.empty:
             fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
             sitc_ratio_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()
             fii_temp["投本比(%)"] = fii_temp["代號"].map(sitc_ratio_map).fillna(0.0)
             fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)
             
-            # 讓使用者透過勾選方框來選擇要看的族群
             selected_groups = []
             cols_checkbox = st.columns(3)
             
@@ -739,7 +736,7 @@ with tab6:
         ed_sitc = st.data_editor(
             df_sitc,
             use_container_width=True,
-            hide_index=Tool := True,
+            hide_index=True,
             disabled=[c for c in df_sitc.columns if c not in ["族群"]],
             key="ed_sitc_top100",
         )

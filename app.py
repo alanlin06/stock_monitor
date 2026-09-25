@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略")
+st.title("台股強勢策略 (籌碼擴散與溫度計模型)")
 
 DB_FILE = "industry_db.json"
 
@@ -63,7 +63,6 @@ def save_db(db_data):
 if "user_industry_map" not in st.session_state:
     st.session_state.user_industry_map = load_db()
 
-# 🔑 【修正】在此處初始化 session_state，避免 AttributeError 報錯
 if "consensus_group_checks" not in st.session_state:
     st.session_state.consensus_group_checks = {}
 
@@ -260,7 +259,7 @@ def fetch_market_data():
 # 讀取資料
 # =========================================================
 
-with st.spinner("⏳ 正在取得市場資料並計算平滑擴散指標..."):
+with st.spinner("⏳ 正在取得市場資料並計算籌碼擴散與溫度計模型..."):
     today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_market_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
@@ -318,7 +317,7 @@ def build_dataframe_for_codes(codes_list):
 
         amt_today = info["成交金額"]
         pct_chg = info["漲跌幅(%)"]
-        ind = st.session_state.user_industry_map.get(c, "")
+        ind = st.session_state.user_industry_map.get(c, "未分類")
         close_p = info["收盤價"]
         inst_info = get_inst_info(c)
 
@@ -350,45 +349,66 @@ def build_dataframe_for_codes(codes_list):
     return pd.DataFrame(rows)
 
 
+# =========================================================
+# 升級版族群籌碼擴散與溫度計模型計算
+# =========================================================
+
 def build_group_summary(df):
     if df.empty:
         return pd.DataFrame()
 
-    def weighted_avg_sqrt(sub_df, col_name):
-        valid = sub_df[sub_df[col_name] > 0]
-        if valid.empty:
-            return 0.0
-        weights = valid["成交值(億)"]
-        if weights.sum() == 0:
-            raw_mean = valid[col_name].mean()
-        else:
-            raw_mean = np.average(valid[col_name], weights=weights)
-        return round(float(np.sqrt(max(0.0, raw_mean))), 3)
-
     group_rows = []
     for g_name, sub in df.groupby("族群"):
-        count_val = len(sub)
+        total_stocks_in_group = len(sub)
         total_amt = sub["成交值(億)"].sum()
+
+        # 1. 擴散度 (Diffusion)：外本比 / 投本比 > 0 的股票數與佔比
+        fii_positive_sub = sub[sub["外本比(%)"] > 0]
+        sitc_positive_sub = sub[sub["投本比(%)"] > 0]
         
-        # 🔑 擴散指數計算：平方根平滑（個股數 × 總成交值）
-        diffusion_score = round(float(np.sqrt(count_val) * np.sqrt(max(0.0, total_amt))), 2)
+        fii_diffusion_count = len(fii_positive_sub)
+        sitc_diffusion_count = len(sitc_positive_sub)
+        
+        # 雙法人共同擴散（兩者皆 > 0）
+        common_positive_sub = sub[(sub["外本比(%)"] > 0) & (sub["投本比(%)"] > 0)]
+        common_diffusion_count = len(common_positive_sub)
+
+        # 2. 根號強度 (Strength) 搭配成交值權重進行非線性壓縮
+        def get_weighted_sqrt_strength(valid_sub, col_name):
+            if valid_sub.empty:
+                return 0.0
+            vals = np.sqrt(valid_sub[col_name].values)
+            weights = valid_sub["成交值(億)"].values
+            if weights.sum() == 0:
+                return float(vals.mean())
+            return float(np.average(vals, weights=weights))
+
+        fii_strength = round(get_weighted_sqrt_strength(fii_positive_sub, "外本比(%)"), 3)
+        sitc_strength = round(get_weighted_sqrt_strength(sitc_positive_sub, "投本比(%)"), 3)
+
+        # 3. 族群資金溫度計綜合得分：擴散度 × 根號強度 × 成交值權重開根號
+        # 避免單一股票數值過大拉歪整體，透過非線性壓縮呈現真實族群熱度
+        market_attention_factor = np.sqrt(max(0.0, total_amt))
+        group_temperature = round((fii_diffusion_count * fii_strength + sitc_diffusion_count * sitc_strength) * 0.5 * (1 + 0.1 * market_attention_factor), 2)
 
         group_rows.append({
             "族群": g_name,
-            "個股數": count_val,
+            "追蹤個股數": total_stocks_in_group,
+            "外資擴散數": fii_diffusion_count,
+            "投信擴散數": sitc_diffusion_count,
+            "雙法人共同擴散": common_diffusion_count,
             "總成交值億": round(total_amt, 2),
-            "族群擴散指數": diffusion_score,
+            "外資√強度": fii_strength,
+            "投信√強度": sitc_strength,
+            "族群資金溫度計": group_temperature,
             "外資平均連買日": round(sub["外資連買日"].mean(), 1),
             "投信平均連買日": round(sub["投信連買日"].mean(), 1),
-            "外本比": weighted_avg_sqrt(sub, "外本比(%)"),
-            "投本比": weighted_avg_sqrt(sub, "投本比(%)"),
-            "雙法人平均籌碼集中度": weighted_avg_sqrt(sub, "雙法人合佔比(%)"),
         })
 
     summary_df = pd.DataFrame(group_rows)
     if not summary_df.empty:
         summary_df = summary_df.sort_values(
-            by=["族群擴散指數", "雙法人平均籌碼集中度"], ascending=False
+            by=["族群資金溫度計", "總成交值億"], ascending=False
         ).reset_index(drop=True)
     return summary_df
 
@@ -423,12 +443,12 @@ def build_market_consensus(d_fii, d_sitc):
 
     group_summary = build_group_summary(consensus_df)
 
-    group_diff_map = group_summary.set_index("族群")["族群擴散指數"].to_dict()
-    consensus_df["族群擴散指數"] = consensus_df["族群"].map(group_diff_map).fillna(1.0)
+    group_temp_map = group_summary.set_index("族群")["族群資金溫度計"].to_dict()
+    consensus_df["族群資金溫度計"] = consensus_df["族群"].map(group_temp_map).fillna(1.0)
     
-    # 綜合得分公式
+    # 綜合得分公式：結合個股籌碼強度與所屬族群資金溫度計
     consensus_df["綜合得分"] = round(
-        np.sqrt(consensus_df["雙法人合佔比(%)"]) * 0.6 + np.sqrt(consensus_df["族群擴散指數"]) * 0.4, 2
+        np.sqrt(consensus_df["雙法人合佔比(%)"]) * 0.6 + np.sqrt(consensus_df["族群資金溫度計"]) * 0.4, 2
     )
 
     consensus_df = consensus_df.sort_values(by="綜合得分", ascending=False).reset_index(drop=True)
@@ -465,26 +485,27 @@ def update_map_from_editor(edited_df):
 # =========================================================
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "🎯 市場共識",
+    "🎯 市場共識與族群溫度計",
     "💰 成交值 TOP 100",
     "🌍 外資買超 TOP 100",
     "🏛️ 投信買超 TOP 100",
 ])
 
 with tab1:
-    st.markdown("### 🔍 市場共識：雙法人交集 × 族群擴散指數評分")
-    if not df_consensus.empty:
+    st.markdown("### 🔍 族群資金溫度計排行與雙法人共識")
+    st.info("💡 透過【擴散度 × 根號強度】模型，有效防止單一飆股（妖股）直接拉高整個族群排名。")
+    
+    if not grp_consensus.empty:
         editor_grp_data = []
         for _, r in grp_consensus.iterrows():
             g_name = r["族群"]
             
-            # 若無記錄則預設為 False (不打勾)
             if g_name not in st.session_state.consensus_group_checks:
-                st.session_state.consensus_group_checks[g_name] = False
+                st.session_state.consensus_group_checks[g_name] = True  # 預設全選方便檢視
                 
             row_dict = r.to_dict()
             row_dict["選擇"] = st.session_state.consensus_group_checks[g_name]
-            cols_order = ["選擇", "族群", "族群擴散指數"] + [c for c in r.index if c not in ["族群", "族群擴散指數"]]
+            cols_order = ["選擇", "族群", "族群資金溫度計"] + [c for c in r.index if c not in ["族群", "族群資金溫度計"]]
             editor_grp_data.append({k: row_dict[k] for k in cols_order if k in row_dict})
 
         df_grp_editable = pd.DataFrame(editor_grp_data)
@@ -506,6 +527,7 @@ with tab1:
                 active_groups.append(g_name)
 
         st.markdown("---")
+        st.markdown("### 📊 符合條件的共識個股明細")
         
         filtered_consensus = df_consensus[df_consensus["族群"].isin(active_groups)] if active_groups else df_consensus.iloc[0:0]
 

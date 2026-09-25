@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略")
+st.title("台股強勢策略（含成交值蓄勢指標）")
 
 DB_FILE = "industry_db.json"
 
@@ -75,7 +75,7 @@ search_query = st.sidebar.text_input(
 
 
 # =========================================================
-# 取得 TWSE 資料與計算連續買超天數
+# 取得 TWSE 資料、歷史成交值與計算連續買超天數
 # =========================================================
 
 @st.cache_data(ttl=600)
@@ -98,7 +98,8 @@ def fetch_market_data():
     curr = datetime.now()
     dates = []
 
-    for i in range(30):
+    # 為了計算 20 日平均成交值，我們需要抓取至少 25~30 個交易日的日期
+    for i in range(45):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/"
@@ -110,7 +111,7 @@ def fetch_market_data():
                 data = res.json()
                 if data.get("stat") == "OK" and len(data.get("tables", [])) > 0:
                     dates.append(d_str)
-                    if len(dates) >= 15:
+                    if len(dates) >= 30:
                         break
         except Exception:
             pass
@@ -118,7 +119,7 @@ def fetch_market_data():
         time.sleep(0.03)
 
     if len(dates) == 0:
-        return {}, {}, {}, [], {}, {}
+        return {}, {}, {}, [], {}, {}, {}
 
     latest_date = dates[0]
     prev_date = dates[1] if len(dates) > 1 else latest_date
@@ -249,15 +250,29 @@ def fetch_market_data():
     today_dict = get_day_market(latest_date)
     prev_dict = get_day_market(prev_date)
 
-    return today_dict, prev_dict, latest_inst, dates, fii_consec_days, sitc_consec_days
+    # 抓取過去 25 個交易日的歷史成交金額，用來計算 20 日平均成交值
+    historical_market = {}
+    for d_str in dates[:25]:
+        historical_market[d_str] = get_day_market(d_str)
+        time.sleep(0.02)
+
+    return today_dict, prev_dict, latest_inst, dates, fii_consec_days, sitc_consec_days, historical_market
 
 
 # =========================================================
 # 讀取資料
 # =========================================================
 
-with st.spinner("⏳ 正在取得市場資料並計算籌碼擴散與溫度計模型..."):
-    today_dict, prev_dict, latest_inst, target_dates, fii_consec_days, sitc_consec_days = fetch_market_data()
+with st.spinner("⏳ 正在取得市場資料並計算籌碼擴散與 20 日成交值蓄勢指標..."):
+    (
+        today_dict,
+        prev_dict,
+        latest_inst,
+        target_dates,
+        fii_consec_days,
+        sitc_consec_days,
+        historical_market,
+    ) = fetch_market_data()
 
     latest_date = target_dates[0] if target_dates else datetime.now().strftime("%Y%m%d")
     prev_date = target_dates[1] if len(target_dates) > 1 else latest_date
@@ -305,6 +320,36 @@ def get_inst_info(code):
     return latest_inst.get(code, {"外資淨買超股數": 0.0, "投信淨買超股數": 0.0})
 
 
+# =========================================================
+# 計算 20 日平均成交值與倍數的輔助函式
+# =========================================================
+
+def calculate_amt_20d_metrics(code, today_amt):
+    if today_amt <= 0 or not historical_market:
+        return 0.0, 0.0
+
+    historical_values = []
+    # 從歷史記錄中收集過去最多 20 個交易日的成交金額（排除今天）
+    sorted_dates = sorted(historical_market.keys(), reverse=True)
+    for d_str in sorted_dates:
+        if target_dates and d_str == target_dates[0]:
+            continue
+        day_data = historical_market.get(d_str, {})
+        if code in day_data:
+            amt = day_data[code].get("成交金額", 0)
+            if amt > 0:
+                historical_values.append(amt)
+        if len(historical_values) >= 20:
+            break
+
+    if len(historical_values) == 0:
+        return 0.0, 0.0
+
+    avg_20d = float(np.mean(historical_values))
+    ratio = (today_amt / avg_20d) if avg_20d > 0 else 0.0
+    return round(avg_20d / 100000000, 2), round(ratio, 2)
+
+
 def build_dataframe_for_codes(codes_list):
     rows = []
     for c in codes_list:
@@ -329,6 +374,9 @@ def build_dataframe_for_codes(codes_list):
         f_days = fii_consec_days.get(c, 0)
         s_days = sitc_consec_days.get(c, 0)
 
+        # 計算 20 日平均成交金額與 20 日比
+        avg_20d_yi, amt_ratio = calculate_amt_20d_metrics(c, amt_today)
+
         rows.append({
             "代號": c,
             "官方名稱": info["官方名稱"],
@@ -341,6 +389,8 @@ def build_dataframe_for_codes(codes_list):
             "漲跌幅(%)": pct_chg,
             "收盤價": close_p,
             "成交值(億)": round(amt_today / 100000000, 2),
+            "20日平均成交值(億)": avg_20d_yi,
+            "成交值20日比": amt_ratio,
         })
 
     return pd.DataFrame(rows)
@@ -577,7 +627,6 @@ with tab1:
     )
 
     if not grp_common.empty:
-        # 在總表 DataFrame 中加入一欄「選取」布林值，讓每一列族群名稱旁邊都有勾選框
         display_df = grp_common.copy()
         display_df.insert(0, "選取", False)
 
@@ -589,14 +638,16 @@ with tab1:
             key="ed_common_group_selection",
         )
 
-        # 抓出被勾選的族群名稱
         selected_groups = edited_grp_common[edited_grp_common["選取"] == True]["族群"].tolist()
 
         st.markdown("---")
         st.markdown("#### 🎯 勾選族群的個股明細")
 
         if not df_fii.empty and not df_sitc.empty:
-            fii_temp = df_fii[["代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)", "收盤價", "成交值(億)"]].copy()
+            fii_temp = df_fii[[
+                "代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)",
+                "收盤價", "成交值(億)", "20日平均成交值(億)", "成交值20日比"
+            ]].copy()
             sitc_ratio_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()
             fii_temp["投本比(%)"] = fii_temp["代號"].map(sitc_ratio_map).fillna(0.0)
             fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)

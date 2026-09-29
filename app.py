@@ -98,7 +98,6 @@ def fetch_market_data():
     curr = datetime.now()
     dates = []
 
-    # 為了計算 20 日平均成交值與 20 日模型，我們需要抓取至少 35~45 個交易日的日期
     for i in range(50):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
@@ -250,7 +249,6 @@ def fetch_market_data():
     today_dict = get_day_market(latest_date)
     prev_dict = get_day_market(prev_date)
 
-    # 抓取過去 30 個交易日的歷史市場資料，用來計算 20 日平均成交值與 AI-20日模型
     historical_market = {}
     for d_str in dates[:30]:
         historical_market[d_str] = get_day_market(d_str)
@@ -352,22 +350,11 @@ def calculate_amt_20d_metrics(code, today_amt):
 def calculate_ai_20_model(code, current_close):
     """
     20日價格模型（只使用該股票真實歷史收盤價）。
-
-    資料規則：
-    1. historical_market 中的最新交易日就是今天，因此先排除今天。
-    2. 再依日期由新到舊取得前 20 個「已完成交易日」。
-    3. 今天的 current_close 只加入一次，不重複計算。
-    4. 模型只看價格，不混入外資、投信、成交值或族群溫度，
-       避免與原本的籌碼模型重複加權。
-
-    分數：
-    - 20日乖離率 BIAS：50%
-    - 20日價格動能：50%
+    狀態已轉化為：建議買進、建議賣出、盤整震盪。
     """
     if not historical_market or current_close <= 0:
-        return 0.0, "🟡 【低頻區 - 資料不足】"
+        return 0.0, "🟡 【盤整震盪 - 資料不足】"
 
-    # historical_market 已包含最新交易日，所以必須明確排除今天。
     historical_prices = []
     latest_date = target_dates[0] if target_dates else None
 
@@ -385,27 +372,22 @@ def calculate_ai_20_model(code, current_close):
         if p > 0:
             historical_prices.append(float(p))
 
-        # 取得至少 20 個「今天以前」的真實交易日
         if len(historical_prices) >= 20:
             break
 
     if len(historical_prices) < 20:
-        return 0.0, "🟡 【低頻區 - 資料不足】"
+        return 0.0, "🟡 【盤整震盪 - 資料不足】"
 
-    # historical_prices 目前是「新 → 舊」，反轉成「舊 → 新」
     previous_20 = list(reversed(historical_prices[:20]))
 
-    # 20日均線：今天 + 前19個交易日，共20個價格。
     ma20_prices = previous_20[-19:] + [float(current_close)]
     ma20 = float(np.mean(ma20_prices))
 
-    # 20日乖離率
     bias20 = (
         ((float(current_close) - ma20) / ma20) * 100
         if ma20 > 0 else 0.0
     )
 
-    # 20日價格動能：今天相對於20個交易日前的收盤價。
     price_20d_ago = previous_20[0]
 
     momentum20 = (
@@ -413,20 +395,18 @@ def calculate_ai_20_model(code, current_close):
         if price_20d_ago > 0 else 0.0
     )
 
-    # 第一版保持單純：
-    # 只由價格本身決定，不加入法人、成交值、族群因素。
     model_score = round(
         bias20 * 0.5 + momentum20 * 0.5,
         2
     )
 
-    # 紅／綠線只代表價格狀態，不直接等同於買點或賣點。
+    # 狀態對應修改
     if model_score <= -2.5:
-        status = "🟢 【綠線區 - 價格偏弱】"
+        status = "🟢 【建議賣出 - 價格偏弱】"
     elif model_score >= 4.0:
-        status = "🔴 【紅線區 - 價格偏強】"
+        status = "🔴 【建議買進 - 價格偏強】"
     else:
-        status = "🟡 【低頻區 - 區間整理】"
+        status = "🟡 【盤整震盪 - 區間整理】"
 
     return model_score, status
 
@@ -455,10 +435,7 @@ def build_dataframe_for_codes(codes_list):
         f_days = fii_consec_days.get(c, 0)
         s_days = sitc_consec_days.get(c, 0)
 
-        # 計算 20 日平均成交金額與 20 日比
         avg_20d_yi, amt_ratio = calculate_amt_20d_metrics(c, amt_today)
-        
-        # 計算 20日價格模型分數與狀態
         ai20_score, ai20_status = calculate_ai_20_model(c, close_p)
 
         rows.append({

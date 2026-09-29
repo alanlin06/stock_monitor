@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import pandas as pd
 import streamlit as st
 
 # ==========================================
@@ -13,17 +14,14 @@ st.title("台股強勢策略")
 st.caption(f"最後更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ==========================================
-# 模擬資料與初始化狀態（維持原有邏輯）
+# 模擬資料初始化（若您的環境已有定義可略過）
 # ==========================================
 if "data_initialized" not in st.session_state:
     st.session_state.data_initialized = True
-    # 這裡保留原有的資料結構與變數初始化...
 
-
+# 假設的更新函式
 def update_map_from_editor(df_edited):
-    # 資料更新儲存的輔助函式
     pass
-
 
 # ==========================================
 # 建立頁籤介面
@@ -46,17 +44,13 @@ with tab3:
 
 with tab4:
     st.markdown("### 📈 投信 TOP 100 檢視")
-    # 模擬 df_sitc_positive 邏輯
-    import pandas as pd
-
-    df_sitc_positive = pd.DataFrame()  # 範例空 DataFrame
-
-    if not df_sitc_positive.empty:
+    # 這裡對應您原本的 positive_sitc 變數
+    if 'positive_sitc' in locals() and not positive_sitc.empty:
         ed_sitc_positive = st.data_editor(
-            df_sitc_positive,
+            positive_sitc,
             use_container_width=True,
             hide_index=True,
-            disabled=[c for c in df_sitc_positive.columns if c not in ["族群"]],
+            disabled=[c for c in positive_sitc.columns if c not in ["族群"]],
             key="ed_sitc_positive",
         )
 
@@ -67,12 +61,9 @@ with tab4:
 
 with tab5:
     st.markdown("### 💰 成交值 TOP 100")
-    st.caption(
-        "成交值不直接決定法人籌碼強度；在族群雷達中作為『市場注意力』的獨立確認因子。"
-    )
+    st.caption("成交值不直接決定法人籌碼強度；在族群雷達中作為『市場注意力』的獨立確認因子。")
 
-    df_amt = pd.DataFrame()  # 範例空 DataFrame
-    if not df_amt.empty:
+    if 'df_amt' in locals() and not df_amt.empty:
         ed_amt = st.data_editor(
             df_amt,
             use_container_width=True,
@@ -90,8 +81,7 @@ with tab6:
     st.markdown("### 📋 法人個股 TOP 100")
 
     st.markdown("#### 🌍 外資買超 TOP 100")
-    df_fii = pd.DataFrame()
-    if not df_fii.empty:
+    if 'df_fii' in locals() and not df_fii.empty:
         ed_fii = st.data_editor(
             df_fii,
             use_container_width=True,
@@ -105,8 +95,7 @@ with tab6:
         st.info("目前無符合條件的外資買超資料。")
 
     st.markdown("#### 🏛️ 投信買超 TOP 100")
-    df_sitc = pd.DataFrame()
-    if not df_sitc.empty:
+    if 'df_sitc' in locals() and not df_sitc.empty:
         ed_sitc = st.data_editor(
             df_sitc,
             use_container_width=True,

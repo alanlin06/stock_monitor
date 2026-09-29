@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略（含成交值蓄勢與 20日價格模型）")
+st.title("台股強勢策略")
 
 DB_FILE = "industry_db.json"
 
@@ -403,7 +403,6 @@ def calculate_ai_20_model(code, current_close):
         2
     )
 
-    # 依照您的指定方向設定：綠線買進、紅線賣出
     if model_score <= -2.5:
         status = "🟢 【建議買進 - 價格修正/低接】"
     elif model_score >= 4.0:

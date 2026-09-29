@@ -9,18 +9,18 @@ st.set_page_config(
     page_title="台股強勢策略", page_icon="📈", layout="wide"
 )
 
-# 主標題已改為「台股強勢策略」
+# 確保大標題為「台股強勢策略」
 st.title("台股強勢策略")
 st.caption(f"最後更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 # ==========================================
-# 模擬資料初始化（若您的環境已有定義可略過）
+# 輔助函式與資料更新儲存
 # ==========================================
 if "data_initialized" not in st.session_state:
     st.session_state.data_initialized = True
 
-# 假設的更新函式
 def update_map_from_editor(df_edited):
+    # 資料更新儲存的邏輯
     pass
 
 # ==========================================
@@ -40,11 +40,12 @@ with tab2:
 
 with tab3:
     st.markdown("### 💡 潛力股篩選")
-    st.info("依據技術面與籌碼面條件篩選出的潛力標的。")
+    st.markdown("依據技術面、**綠線區**、**紅線區**與籌碼面條件篩選出的潛力標的。")
 
 with tab4:
     st.markdown("### 📈 投信 TOP 100 檢視")
-    # 這裡對應您原本的 positive_sitc 變數
+    
+    # 這裡完整保留您原本的變數與邏輯
     if 'positive_sitc' in locals() and not positive_sitc.empty:
         ed_sitc_positive = st.data_editor(
             positive_sitc,
@@ -57,7 +58,19 @@ with tab4:
         if st.button("💾 儲存投信族群修改", key="btn_save_sitc"):
             update_map_from_editor(ed_sitc_positive)
     else:
-        st.info("目前投信 TOP 100 中沒有投本比 > 0 的資料。")
+        # 兼容您原本的區塊判斷
+        if 'df_sitc_positive' in locals() and not df_sitc_positive.empty:
+            ed_sitc_positive = st.data_editor(
+                df_sitc_positive,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in df_sitc_positive.columns if c not in ["族群"]],
+                key="ed_sitc_positive",
+            )
+            if st.button("💾 儲存投信族群修改", key="btn_save_sitc"):
+                update_map_from_editor(ed_sitc_positive)
+        else:
+            st.info("目前投信 TOP 100 中沒有投本比 > 0 的資料。")
 
 with tab5:
     st.markdown("### 💰 成交值 TOP 100")

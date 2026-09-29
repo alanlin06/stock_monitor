@@ -350,7 +350,10 @@ def calculate_amt_20d_metrics(code, today_amt):
 def calculate_ai_20_model(code, current_close):
     """
     20日價格模型（只使用該股票真實歷史收盤價）。
-    狀態已轉化為：建議買進、建議賣出、盤整震盪。
+    狀態修正為：
+    - 分數 <= -2.5：建議買進
+    - 分數 >= 4.0：建議賣出
+    - 中間：盤整震盪
     """
     if not historical_market or current_close <= 0:
         return 0.0, "🟡 【盤整震盪 - 資料不足】"
@@ -400,11 +403,11 @@ def calculate_ai_20_model(code, current_close):
         2
     )
 
-    # 狀態對應修改
+    # 依照您的指定方向設定：綠線買進、紅線賣出
     if model_score <= -2.5:
-        status = "🟢 【建議賣出 - 價格偏弱】"
+        status = "🟢 【建議買進 - 價格修正/低接】"
     elif model_score >= 4.0:
-        status = "🔴 【建議買進 - 價格偏強】"
+        status = "🔴 【建議賣出 - 價格過熱/高檔】"
     else:
         status = "🟡 【盤整震盪 - 區間整理】"
 

@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("台股強勢策略（含成交值蓄勢指標）")
+st.title("台股強勢策略（含成交值蓄勢與 20日價格模型）")
 
 DB_FILE = "industry_db.json"
 
@@ -98,8 +98,8 @@ def fetch_market_data():
     curr = datetime.now()
     dates = []
 
-    # 為了計算 20 日平均成交值，我們需要抓取至少 25~30 個交易日的日期
-    for i in range(45):
+    # 為了計算 20 日平均成交值與 20 日模型，我們需要抓取至少 35~45 個交易日的日期
+    for i in range(50):
         d_str = curr.strftime("%Y%m%d")
         test_url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/"
@@ -111,7 +111,7 @@ def fetch_market_data():
                 data = res.json()
                 if data.get("stat") == "OK" and len(data.get("tables", [])) > 0:
                     dates.append(d_str)
-                    if len(dates) >= 30:
+                    if len(dates) >= 35:
                         break
         except Exception:
             pass
@@ -250,9 +250,9 @@ def fetch_market_data():
     today_dict = get_day_market(latest_date)
     prev_dict = get_day_market(prev_date)
 
-    # 抓取過去 25 個交易日的歷史成交金額，用來計算 20 日平均成交值
+    # 抓取過去 30 個交易日的歷史市場資料，用來計算 20 日平均成交值與 AI-20日模型
     historical_market = {}
-    for d_str in dates[:25]:
+    for d_str in dates[:30]:
         historical_market[d_str] = get_day_market(d_str)
         time.sleep(0.02)
 
@@ -263,7 +263,7 @@ def fetch_market_data():
 # 讀取資料
 # =========================================================
 
-with st.spinner("⏳ 正在取得市場資料並計算籌碼擴散與 20 日成交值蓄勢指標..."):
+with st.spinner("⏳ 正在取得市場資料並計算籌碼擴散、蓄勢指標與 20日價格模型..."):
     (
         today_dict,
         prev_dict,
@@ -321,7 +321,7 @@ def get_inst_info(code):
 
 
 # =========================================================
-# 計算 20 日平均成交值與倍數的輔助函式
+# 計算 20 日平均成交值與 20日價格模型指標
 # =========================================================
 
 def calculate_amt_20d_metrics(code, today_amt):
@@ -329,7 +329,6 @@ def calculate_amt_20d_metrics(code, today_amt):
         return 0.0, 0.0
 
     historical_values = []
-    # 從歷史記錄中收集過去最多 20 個交易日的成交金額（排除今天）
     sorted_dates = sorted(historical_market.keys(), reverse=True)
     for d_str in sorted_dates:
         if target_dates and d_str == target_dates[0]:
@@ -348,6 +347,88 @@ def calculate_amt_20d_metrics(code, today_amt):
     avg_20d = float(np.mean(historical_values))
     ratio = (today_amt / avg_20d) if avg_20d > 0 else 0.0
     return round(avg_20d / 100000000, 2), round(ratio, 2)
+
+
+def calculate_ai_20_model(code, current_close):
+    """
+    20日價格模型（只使用該股票真實歷史收盤價）。
+
+    資料規則：
+    1. historical_market 中的最新交易日就是今天，因此先排除今天。
+    2. 再依日期由新到舊取得前 20 個「已完成交易日」。
+    3. 今天的 current_close 只加入一次，不重複計算。
+    4. 模型只看價格，不混入外資、投信、成交值或族群溫度，
+       避免與原本的籌碼模型重複加權。
+
+    分數：
+    - 20日乖離率 BIAS：50%
+    - 20日價格動能：50%
+    """
+    if not historical_market or current_close <= 0:
+        return 0.0, "🟡 【低頻區 - 資料不足】"
+
+    # historical_market 已包含最新交易日，所以必須明確排除今天。
+    historical_prices = []
+    latest_date = target_dates[0] if target_dates else None
+
+    sorted_dates = sorted(historical_market.keys(), reverse=True)
+
+    for d_str in sorted_dates:
+        if latest_date and d_str == latest_date:
+            continue
+
+        day_data = historical_market.get(d_str, {})
+        if code not in day_data:
+            continue
+
+        p = day_data[code].get("收盤價", 0)
+        if p > 0:
+            historical_prices.append(float(p))
+
+        # 取得至少 20 個「今天以前」的真實交易日
+        if len(historical_prices) >= 20:
+            break
+
+    if len(historical_prices) < 20:
+        return 0.0, "🟡 【低頻區 - 資料不足】"
+
+    # historical_prices 目前是「新 → 舊」，反轉成「舊 → 新」
+    previous_20 = list(reversed(historical_prices[:20]))
+
+    # 20日均線：今天 + 前19個交易日，共20個價格。
+    ma20_prices = previous_20[-19:] + [float(current_close)]
+    ma20 = float(np.mean(ma20_prices))
+
+    # 20日乖離率
+    bias20 = (
+        ((float(current_close) - ma20) / ma20) * 100
+        if ma20 > 0 else 0.0
+    )
+
+    # 20日價格動能：今天相對於20個交易日前的收盤價。
+    price_20d_ago = previous_20[0]
+
+    momentum20 = (
+        ((float(current_close) - price_20d_ago) / price_20d_ago) * 100
+        if price_20d_ago > 0 else 0.0
+    )
+
+    # 第一版保持單純：
+    # 只由價格本身決定，不加入法人、成交值、族群因素。
+    model_score = round(
+        bias20 * 0.5 + momentum20 * 0.5,
+        2
+    )
+
+    # 紅／綠線只代表價格狀態，不直接等同於買點或賣點。
+    if model_score <= -2.5:
+        status = "🟢 【綠線區 - 價格偏弱】"
+    elif model_score >= 4.0:
+        status = "🔴 【紅線區 - 價格偏強】"
+    else:
+        status = "🟡 【低頻區 - 區間整理】"
+
+    return model_score, status
 
 
 def build_dataframe_for_codes(codes_list):
@@ -376,11 +457,16 @@ def build_dataframe_for_codes(codes_list):
 
         # 計算 20 日平均成交金額與 20 日比
         avg_20d_yi, amt_ratio = calculate_amt_20d_metrics(c, amt_today)
+        
+        # 計算 20日價格模型分數與狀態
+        ai20_score, ai20_status = calculate_ai_20_model(c, close_p)
 
         rows.append({
             "代號": c,
             "官方名稱": info["官方名稱"],
             "族群": ind,
+            "AI-20日模型狀態": ai20_status,
+            "模型分數": ai20_score,
             "外資連買日": f_days,
             "投信連買日": s_days,
             "外本比(%)": round(fii_ratio, 3),
@@ -644,8 +730,12 @@ with tab1:
         st.markdown("#### 🎯 勾選族群的個股明細")
 
         if not df_fii.empty and not df_sitc.empty:
+            st.caption(
+                "📈 20日價格模型只使用該股真實歷史收盤價；"
+                "今天價格只計算一次，不混入外資、投信、成交值與族群溫度。"
+            )
             fii_temp = df_fii[[
-                "代號", "官方名稱", "族群", "外本比(%)", "漲跌幅(%)",
+                "代號", "官方名稱", "族群", "AI-20日模型狀態", "模型分數", "外本比(%)", "漲跌幅(%)",
                 "收盤價", "成交值(億)", "20日平均成交值(億)", "成交值20日比"
             ]].copy()
             sitc_ratio_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()

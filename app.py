@@ -403,6 +403,7 @@ def calculate_ai_20_model(code, current_close):
         2
     )
 
+    # 依照您的指定方向設定：綠線買進、紅線賣出
     if model_score <= -2.5:
         status = "🟢 【建議買進 - 價格修正/低接】"
     elif model_score >= 4.0:

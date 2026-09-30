@@ -348,13 +348,6 @@ def calculate_amt_20d_metrics(code, today_amt):
 
 
 def calculate_ai_20_model(code, current_close):
-    """
-    20日價格模型（只使用該股票真實歷史收盤價）。
-    狀態修正為：
-    - 分數 <= -2.5：建議買進
-    - 分數 >= 4.0：建議賣出
-    - 中間：盤整震盪
-    """
     if not historical_market or current_close <= 0:
         return 0.0, "🟡 【盤整震盪 - 資料不足】"
 
@@ -403,7 +396,6 @@ def calculate_ai_20_model(code, current_close):
         2
     )
 
-    # 依照您的指定方向設定：綠線買進、紅線賣出
     if model_score <= -2.5:
         status = "🟢 【建議買進 - 價格修正/低接】"
     elif model_score >= 4.0:
@@ -723,13 +715,18 @@ with tab1:
             fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)
             
             if selected_groups:
-                filtered_stocks = fii_temp[fii_temp["族群"].isin(selected_groups)].sort_values(by="雙法人合佔比(%)", ascending=False)
+                # 篩選已勾選族群，且必須外本比 > 0 且 投本比 > 0
+                filtered_stocks = fii_temp[
+                    (fii_temp["族群"].isin(selected_groups)) & 
+                    (fii_temp["外本比(%)"] > 0) & 
+                    (fii_temp["投本比(%)"] > 0)
+                ].sort_values(by="雙法人合佔比(%)", ascending=False)
                 
                 if not filtered_stocks.empty:
-                    st.success(f"目前顯示已勾選族群：`{', '.join(selected_groups)}` 的個股")
+                    st.success(f"目前顯示已勾選族群：`{', '.join(selected_groups)}` 的個股（外本比與投本比皆 > 0）")
                     st.dataframe(filtered_stocks, use_container_width=True, hide_index=True)
                 else:
-                    st.info("所選族群中目前沒有符合條件的個股資料。")
+                    st.info("所選族群中目前沒有符合「外本比 > 0 且 投本比 > 0」條件的個股資料。")
             else:
                 st.caption("👆 請在上方『雙法人共同擴散總表』左側勾選您想檢視的族群，即可在此處展開對應的個股清單。")
     else:

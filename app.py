@@ -735,37 +735,22 @@ with tab1:
 
 with tab_radar:
     st.markdown("### 🎯 雷達模型建議（建議買進清單）")
-    st.caption("篩選邏輯：從外資雷達與投信雷達中，抓出 AI-20日模型狀態包含「建議買進」的股票，並附加該族群對應的擴散度。")
-
-    # 建立外資族群擴散度對應字典
-    fii_diff_map = grp_fii.set_index("族群")["外資擴散度(%)"].to_dict() if not grp_fii.empty else {}
-    # 建立投信族群擴散度對應字典
-    sitc_diff_map = grp_sitc.set_index("族群")["投信擴散度(%)"].to_dict() if not grp_sitc.empty else {}
+    st.caption("篩選邏輯：從外資雷達與投信雷達中，抓出 AI-20日模型狀態包含「建議買進」的股票。")
 
     # 篩選外資雷達中建議買進的股票
     if not df_fii.empty:
         fii_buy = df_fii[df_fii["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy()
-        # 插入外資族群擴散度欄位在 AI-20日模型狀態 旁邊
-        fii_buy["外資族群擴散度(%)"] = fii_buy["族群"].map(fii_diff_map).fillna(0.0)
     else:
         fii_buy = pd.DataFrame()
 
     # 篩選投信雷達中建議買進的股票
     if not df_sitc.empty:
         sitc_buy = df_sitc[df_sitc["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy()
-        # 插入投信族群擴散度欄位在 AI-20日模型狀態 旁邊
-        sitc_buy["投信族群擴散度(%)"] = sitc_buy["族群"].map(sitc_diff_map).fillna(0.0)
     else:
         sitc_buy = pd.DataFrame()
 
     st.markdown("#### 🌍 外資雷達 - 建議買進名單")
     if not fii_buy.empty:
-        cols_order_fii = [c for c in fii_buy.columns]
-        if "AI-20日模型狀態" in cols_order_fii:
-            idx = cols_order_fii.index("AI-20日模型狀態")
-            cols_order_fii.insert(idx + 1, cols_order_fii.pop(cols_order_fii.index("外資族群擴散度(%)")))
-        fii_buy = fii_buy[cols_order_fii]
-
         ed_fii_buy = st.data_editor(
             fii_buy,
             use_container_width=True,
@@ -782,12 +767,6 @@ with tab_radar:
 
     st.markdown("#### 🏛️ 投信雷達 - 建議買進名單")
     if not sitc_buy.empty:
-        cols_order_sitc = [c for c in sitc_buy.columns]
-        if "AI-20日模型狀態" in cols_order_sitc:
-            idx = cols_order_sitc.index("AI-20日模型狀態")
-            cols_order_sitc.insert(idx + 1, cols_order_sitc.pop(cols_order_sitc.index("投信族群擴散度(%)")))
-        sitc_buy = sitc_buy[cols_order_sitc]
-
         ed_sitc_buy = st.data_editor(
             sitc_buy,
             use_container_width=True,

@@ -669,8 +669,9 @@ def update_map_from_editor(edited_df):
 # 分頁介面
 # =========================================================
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab_radar, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🤝 雙法人共同擴散",
+    "🎯 雷達模型建議",
     "🔥 雙法人共識",
     "🌍 外資族群雷達",
     "🏛️ 投信族群雷達",
@@ -715,7 +716,6 @@ with tab1:
             fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)
             
             if selected_groups:
-                # 篩選已勾選族群，且必須外本比 > 0 且 投本比 > 0
                 filtered_stocks = fii_temp[
                     (fii_temp["族群"].isin(selected_groups)) & 
                     (fii_temp["外本比(%)"] > 0) & 
@@ -731,6 +731,46 @@ with tab1:
                 st.caption("👆 請在上方『雙法人共同擴散總表』左側勾選您想檢視的族群，即可在此處展開對應的個股清單。")
     else:
         st.info("目前沒有雙法人共同擴散資料。")
+
+
+with tab_radar:
+    st.markdown("### 🎯 雷達模型建議（建議買進清單）")
+    st.caption("篩選邏輯：從外資雷達與投信雷達中，抓出 AI-20日模型狀態包含「建議買進」的股票。")
+
+    # 篩選外資雷達中建議買進的股票
+    fii_buy = df_fii[df_fii["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy() if not df_fii.empty else pd.DataFrame()
+    # 篩選投信雷達中建議買進的股票
+    sitc_buy = df_sitc[df_sitc["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy() if not df_sitc.empty else pd.DataFrame()
+
+    st.markdown("#### 🌍 外資雷達 - 建議買進名單")
+    if not fii_buy.empty:
+        ed_fii_buy = st.data_editor(
+            fii_buy,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in fii_buy.columns if c not in ["族群"]],
+            key="ed_fii_radar_buy",
+        )
+        if st.button("💾 儲存外資雷達建議買進族群修改", key="btn_save_fii_radar"):
+            update_map_from_editor(ed_fii_buy)
+    else:
+        st.info("目前外資雷達中沒有模型狀態為「建議買進」的股票。")
+
+    st.markdown("---")
+
+    st.markdown("#### 🏛️ 投信雷達 - 建議買進名單")
+    if not sitc_buy.empty:
+        ed_sitc_buy = st.data_editor(
+            sitc_buy,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in sitc_buy.columns if c not in ["族群"]],
+            key="ed_sitc_radar_buy",
+        )
+        if st.button("💾 儲存投信雷達建議買進族群修改", key="btn_save_sitc_radar"):
+            update_map_from_editor(ed_sitc_buy)
+    else:
+        st.info("目前投信雷達中沒有模型狀態為「建議買進」的股票。")
 
 
 with tab2:

@@ -1926,16 +1926,18 @@ df_consensus = build_market_consensus(
 
 
 # =========================================================
-# ★ 新增：雙法人＋買進共振
+# ★ 新增：模型雷達（三大模型標籤交集）
 # =========================================================
 
-def build_buy_resonance(
+def build_model_radar(
+    d_amt,
     d_fii,
     d_sitc
 ):
 
     if (
-        d_fii.empty
+        d_amt.empty
+        or d_fii.empty
         or d_sitc.empty
     ):
 
@@ -1943,151 +1945,116 @@ def build_buy_resonance(
 
 
     # -----------------------------------------------------
-    # 以外資資料作為主體
+    # 1. 價格模型：必須在 成交值 TOP 100 中，且狀態為「建議買進」
     # -----------------------------------------------------
 
-    resonance = d_fii.copy()
-
-
-    # -----------------------------------------------------
-    # 對應投信投本比
-    # -----------------------------------------------------
-
-    sitc_ratio_map = (
-        d_sitc
-        .set_index("代號")
-        [
-            "投本比(%)"
-        ]
-        .to_dict()
-    )
-
-
-    resonance[
-        "投本比(%)"
-    ] = (
-        resonance[
-            "代號"
-        ]
-        .map(
-            sitc_ratio_map
-        )
-        .fillna(0.0)
-    )
-
-
-    # -----------------------------------------------------
-    # 雙法人合佔比
-    # -----------------------------------------------------
-
-    resonance[
-        "雙法人合佔比(%)"
-    ] = (
-        resonance[
-            "外本比(%)"
-        ]
-        +
-        resonance[
-            "投本比(%)"
-        ]
-    ).round(3)
-
-
-    # -----------------------------------------------------
-    # ★ 核心條件
-    #
-    # 1. 外本比 > 0
-    # 2. 投本比 > 0
-    # 3. AI-20 模型 = 建議買進
-    # -----------------------------------------------------
-
-    resonance = resonance[
-        (
-            resonance[
-                "外本比(%)"
-            ] > 0
-        )
-        &
-        (
-            resonance[
-                "投本比(%)"
-            ] > 0
-        )
-        &
-        (
-            resonance[
-                "AI-20日模型狀態"
-            ].str.contains(
-                "建議買進",
-                na=False
-            )
+    price_buy = d_amt[
+        d_amt[
+            "AI-20日模型狀態"
+        ].str.contains(
+            "建議買進",
+            na=False
         )
     ].copy()
 
-
-    if resonance.empty:
-
+    if price_buy.empty:
         return pd.DataFrame()
 
 
     # -----------------------------------------------------
-    # 重新整理欄位
+    # 2. 外資族群雷達：必須在外資 TOP 100 裡面，且狀態為「建議買進」
+    #    （此處外資雷達個股亦使用與價格模型相同的計算邏輯判定狀態）
     # -----------------------------------------------------
 
+    fii_buy = d_fii[
+        d_fii[
+            "AI-20日模型狀態"
+        ].str.contains(
+            "建議買進",
+            na=False
+        )
+    ].copy()
+
+    if fii_buy.empty:
+        return pd.DataFrame()
+
+
+    # -----------------------------------------------------
+    # 3. 投信族群雷達：必須在投信 TOP 100 裡面，且狀態為「建議買進」
+    # -----------------------------------------------------
+
+    sitc_buy = d_sitc[
+        d_sitc[
+            "AI-20日模型狀態"
+        ].str.contains(
+            "建議買進",
+            na=False
+        )
+    ].copy()
+
+    if sitc_buy.empty:
+        return pd.DataFrame()
+
+
+    # -----------------------------------------------------
+    # 取三者的交集 (Intersection of Codes)
+    # 價格模型建議買進 ∩ 外資雷達建議買進 ∩ 投信雷達建議買進
+    # -----------------------------------------------------
+
+    codes_price = set(price_buy["代號"].astype(str))
+    codes_fii = set(fii_buy["代號"].astype(str))
+    codes_sitc = set(sitc_buy["代號"].astype(str))
+
+    resonance_codes = codes_price.intersection(
+        codes_fii
+    ).intersection(
+        codes_sitc
+    )
+
+    if not resonance_codes:
+        return pd.DataFrame()
+
+
+    # 以價格模型資料為主體進行篩選與欄位建構
+    resonance = price_buy[
+        price_buy["代號"].astype(str).isin(resonance_codes)
+    ].copy()
+
+
+    # 對應並補上外本比與投本比
+    fii_ratio_map = d_fii.set_index("代號")["外本比(%)"].to_dict()
+    sitc_ratio_map = d_sitc.set_index("代號")["投本比(%)"].to_dict()
+
+    resonance["外本比(%)"] = resonance["代號"].map(fii_ratio_map).fillna(0.0)
+    resonance["投本比(%)"] = resonance["代號"].map(sitc_ratio_map).fillna(0.0)
+    resonance["雙法人合佔比(%)"] = (
+        resonance["外本比(%)"] + resonance["投本比(%)"]
+    ).round(3)
+
+
     columns = [
-
         "代號",
-
         "官方名稱",
-
         "族群",
-
         "AI-20日模型狀態",
-
         "模型分數",
-
         "外資連買日",
-
         "投信連買日",
-
         "外本比(%)",
-
         "投本比(%)",
-
         "雙法人合佔比(%)",
-
         "漲跌幅(%)",
-
         "收盤價",
-
         "成交值(億)",
-
         "20日平均成交值(億)",
-
         "成交值20日比",
     ]
 
-
     columns = [
-        c
-        for c in columns
-        if c in resonance.columns
+        c for c in columns if c in resonance.columns
     ]
 
-
-    resonance = resonance[
-        columns
-    ]
-
-
-    # -----------------------------------------------------
-    # 排序
-    #
-    # 先看雙法人合佔比
-    # 再看模型分數
-    # -----------------------------------------------------
-
-    resonance = resonance.sort_values(
+    resonance = resonance[columns].sort_values(
         by=[
             "雙法人合佔比(%)",
             "模型分數",
@@ -2100,11 +2067,11 @@ def build_buy_resonance(
         drop=True
     )
 
-
     return resonance
 
 
-df_buy_resonance = build_buy_resonance(
+df_model_radar = build_model_radar(
+    df_amt,
     df_fii,
     df_sitc
 )
@@ -2118,7 +2085,7 @@ if search_query:
 
     for d in [
         df_consensus,
-        df_buy_resonance,
+        df_model_radar,
         df_amt,
         df_fii,
         df_sitc,
@@ -2221,7 +2188,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
 
         "🤝 雙法人共同擴散",
 
-        "🎯 雙法人＋買進共振",
+        "🎯 模型雷達",
 
         "🔥 雙法人共識",
 
@@ -2428,37 +2395,37 @@ with tab1:
 
 # =========================================================
 # TAB 2
-# ★ 雙法人＋買進共振
+# ★ 模型雷達
 # =========================================================
 
 with tab2:
 
     st.markdown(
-        "### 🎯 雙法人＋買進共振"
+        "### 🎯 模型雷達"
     )
 
     st.info(
-        "這裡只收集三個條件同時成立的個股："
+        "這裡直接抓取三個既有模組各自輸出的「模型狀態標籤」做邏輯交集："
         "\n\n"
-        "① 外本比 > 0　"
-        "② 投本比 > 0　"
-        "③ AI-20日模型狀態 = 建議買進"
+        "① **價格模型**：狀態 = 建議買進\n"
+        "② **外資族群雷達**：該股票在雷達內且狀態 = 建議買進\n"
+        "③ **投信族群雷達**：該股票在雷達內且狀態 = 建議買進"
         "\n\n"
-        "也就是「雙法人共同買進」＋「價格模型建議買進」的交集。"
+        "僅收錄三個模組同時判定為「建議買進」的共振個股。"
     )
 
 
-    if not df_buy_resonance.empty:
+    if not df_model_radar.empty:
 
         st.success(
             f"🎯 目前共有 "
-            f"{len(df_buy_resonance)} "
-            "檔符合雙法人＋買進共振條件"
+            f"{len(df_model_radar)} "
+            "檔符合模型雷達交集條件"
         )
 
 
         st.dataframe(
-            df_buy_resonance,
+            df_model_radar,
             use_container_width=True,
             hide_index=True
         )
@@ -2467,9 +2434,7 @@ with tab2:
     else:
 
         st.info(
-            "目前沒有符合「外本比 > 0、"
-            "投本比 > 0、模型建議買進」"
-            "的個股。"
+            "目前沒有同時滿足「價格模型、外資雷達、投信雷達」皆為建議買進的個股。"
         )
 
 

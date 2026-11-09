@@ -458,4 +458,23 @@ def build_dataframe_for_codes(codes_list):
         s_days = sitc_consec_days.get(c, 0)
 
         avg_20d_yi, amt_ratio = calculate_amt_20d_metrics(c, amt_today)
-        ai20_score, ai
+        ai20_score, ai20_status = calculate_ai_20_model(c, close_p)
+
+        rows.append({
+            "代號": c,
+            "名稱": info["官方名稱"],
+            "族群": ind,
+            "收盤價": close_p,
+            "漲跌幅(%)": pct_chg,
+            "成交金額(億)": round(amt_today / 100000000, 2),
+            "20日均量(億)": avg_20d_yi,
+            "量能倍數": amt_ratio,
+            "外資買超(張)": int(fii_shares / 1000),
+            "投信買超(張)": int(sitc_shares / 1000),
+            "法人買超占比(%)": round(combined_ratio, 2),
+            "外資連買": f_days,
+            "投信連買": s_days,
+            "20日模型分數": ai20_score,
+            "價格狀態": ai20_status,
+        })
+    return pd.DataFrame(rows)

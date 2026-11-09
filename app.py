@@ -251,7 +251,6 @@ def fetch_market_data():
                                     continue
                                 close_p = float(close_raw)
 
-                                # 嘗試抓取當日最高價 (通常在 index 6 或 7，若無則用收盤價替代)
                                 high_p = close_p
                                 try:
                                     high_raw = str(row[6]).replace(",", "").strip()
@@ -473,7 +472,6 @@ def build_dataframe_for_codes(codes_list):
         avg_20d_yi, amt_ratio = calculate_amt_20d_metrics(c, amt_today)
         ai20_score, ai20_status = calculate_ai_20_model(c, close_p)
 
-        # 判斷當日收盤價是否大於前一日交易日價格之高點（新增紅燈標示）
         signal_light = "⚪ 正常"
         if c in prev_day_dict:
             prev_high = prev_day_dict[c].get("最高價", prev_day_dict[c].get("收盤價", 0))
@@ -638,7 +636,6 @@ grp_common = build_common_group_summary(df_fii, df_sitc)
 def update_buy_tracking_list():
     current_track = st.session_state.buy_track_list.copy()
     
-    # 收集當前符合外資或投信「建議買進」的股票
     active_buy_codes = set()
     for df_source in [df_fii, df_sitc]:
         if not df_source.empty:
@@ -646,10 +643,8 @@ def update_buy_tracking_list():
             for _, r in matched.iterrows():
                 active_buy_codes.add(str(r["代號"]))
 
-    # 更新追蹤狀態：只要狀態依舊是建議買進就持續追蹤
     updated_track = {}
     for code in active_buy_codes:
-        # 從 df_fii 或 df_sitc 抓取詳細資訊
         info_row = None
         for df_source in [df_fii, df_sitc]:
             if not df_source.empty:
@@ -906,4 +901,83 @@ with tab3:
                 update_map_from_editor(ed_fii_positive)
         else:
             st.info("目前外資 TOP 100 中沒有外本比 > 0 的資料。")
-    else
+    else:
+        st.info("目前無外資族群資料。")
+
+
+with tab4:
+    st.markdown("### 🏛️ 投信族群雷達")
+    st.caption("資料來源：投信買超 TOP 100；只把投本比 > 0 的股票視為正向籌碼。")
+
+    if not grp_sitc.empty:
+        st.dataframe(grp_sitc, use_container_width=True, hide_index=True)
+
+        st.markdown("#### 投信族群正向個股")
+        positive_sitc = df_sitc[df_sitc["投本比(%)"] > 0].copy()
+
+        if not positive_sitc.empty:
+            ed_sitc_positive = st.data_editor(
+                positive_sitc,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in positive_sitc.columns if c not in ["族群"]],
+                key="ed_sitc_positive",
+            )
+
+            if st.button("💾 儲存投信族群修改", key="btn_save_sitc"):
+                update_map_from_editor(ed_sitc_positive)
+        else:
+            st.info("目前投信 TOP 100 中沒有投本比 > 0 的資料。")
+    else:
+        st.info("目前無投信族群資料。")
+
+
+with tab5:
+    st.markdown("### 💰 成交值 TOP 100")
+    st.caption("成交值不直接決定法人籌碼強度；在族群雷達中作為『市場注意力』的獨立確認因子。")
+
+    if not df_amt.empty:
+        ed_amt = st.data_editor(
+            df_amt,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_amt.columns if c not in ["族群"]],
+            key="ed_amt_top100",
+        )
+
+        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+            update_map_from_editor(ed_amt)
+    else:
+        st.info("目前無符合條件的成交值資料。")
+
+
+with tab6:
+    st.markdown("### 📋 法人個股 TOP 100")
+
+    st.markdown("#### 🌍 外資買超 TOP 100")
+    if not df_fii.empty:
+        ed_fii = st.data_editor(
+            df_fii,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_fii.columns if c not in ["族群"]],
+            key="ed_fii_top100",
+        )
+        if st.button("💾 儲存外資個股族群修改", key="btn_save_fii_top100"):
+            update_map_from_editor(ed_fii)
+    else:
+        st.info("目前無符合條件的外資買超資料。")
+
+    st.markdown("#### 🏛️ 投信買超 TOP 100")
+    if not df_sitc.empty:
+        ed_sitc = st.data_editor(
+            df_sitc,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_sitc.columns if c not in ["族群"]],
+            key="ed_sitc_top100",
+        )
+        if st.button("💾 儲存投信個股族群修改", key="btn_save_sitc_top100"):
+            update_map_from_editor(ed_sitc)
+    else:
+        st.info("目前無符合條件的投信買超資料。")

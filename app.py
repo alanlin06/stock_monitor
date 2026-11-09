@@ -379,12 +379,12 @@ def calculate_ai_20_model(code, current_close):
         return 0.0, "🟡 【盤整震盪 - 資料不足】"
 
     historical_prices = []
-    latest_date = target_dates[0] if target_dates else None
+    latest_date_val = target_dates[0] if target_dates else None
 
     sorted_dates = sorted(historical_market.keys(), reverse=True)
 
     for d_str in sorted_dates:
-        if latest_date and d_str == latest_date:
+        if latest_date_val and d_str == latest_date_val:
             continue
 
         day_data = historical_market.get(d_str, {})
@@ -478,3 +478,15 @@ def build_dataframe_for_codes(codes_list):
             "價格狀態": ai20_status,
         })
     return pd.DataFrame(rows)
+
+
+# =========================================================
+# 頁面主體展示範例
+# =========================================================
+
+st.subheader("📊 成交金額前 100 大個股清單")
+if today_dict:
+    df_amt = build_dataframe_for_codes(amt_top100_codes)
+    st.dataframe(df_amt, use_container_width=True)
+else:
+    st.warning("⚠️ 目前無法取得台股市場資料，請稍後再試。")

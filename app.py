@@ -753,7 +753,7 @@ def update_map_from_editor(edited_df):
 
 
 # =========================================================
-# 分頁介面 (將「🎯 建議買進名單」排在第一位)
+# 分頁介面
 # =========================================================
 
 tab_buy_suggest, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -803,57 +803,64 @@ with tab_buy_suggest:
 
 
 with tab1:
-    st.markdown("### 🤝 雙法人共同擴散（首要觀察）")
+    st.markdown("### 🤝 雙法人共同擴散（依建議買進清單篩選）")
     st.info(
-        "請直接在下方『雙法人共同擴散總表』最左側的勾選欄位中點選您想檢視的族群，下方即會立即連動顯示該族群的個股明細！"
+        "此分頁的個股明細已直接連動並過濾『建議買進名單』中的股票；"
+        "請在下方勾選您想檢視的族群，即可快速過濾對應的建議買進個股！"
     )
 
-    if not grp_common.empty:
-        display_df = grp_common.copy()
-        display_df.insert(0, "選取", False)
+    track_data = st.session_state.get("buy_track_list", {})
+    if track_data:
+        track_codes = list(track_data.keys())
+        
+        # 建立建議買進個股的暫存 DataFrame
+        buy_df_list = []
+        for c in track_codes:
+            # 從 df_fii 或 df_sitc 抓取完整數據
+            matched_row = None
+            for df_source in [df_fii, df_sitc]:
+                if not df_source.empty:
+                    sub = df_source[df_source["代號"].astype(str) == str(c)]
+                    if not sub.empty:
+                        matched_row = sub.iloc[0].copy()
+                        break
+            if matched_row is not None:
+                buy_df_list.append(matched_row)
 
-        edited_grp_common = st.data_editor(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in display_df.columns if c != "選取"],
-            key="ed_common_group_selection",
-        )
-
-        selected_groups = edited_grp_common[edited_grp_common["選取"] == True]["族群"].tolist()
-
-        st.markdown("---")
-        st.markdown("#### 🎯 勾選族群的個股明細")
-
-        if not df_fii.empty and not df_sitc.empty:
-            st.caption(
-                "📈 20日價格模型只使用該股真實歷史收盤價；"
-                "今天價格只計算一次，不混入外資、投信、成交值與族群溫度。"
-            )
-            fii_temp = df_fii[[
-                "代號", "官方名稱", "族群", "突破燈號", "AI-20日模型狀態", "模型分數", "外本比(%)", "漲跌幅(%)",
-                "收盤價", "成交值(億)", "20日平均成交值(億)", "成交值20日比"
-            ]].copy()
-            sitc_ratio_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()
-            fii_temp["投本比(%)"] = fii_temp["代號"].map(sitc_ratio_map).fillna(0.0)
-            fii_temp["雙法人合佔比(%)"] = (fii_temp["外本比(%)"] + fii_temp["投本比(%)"]).round(3)
+        if buy_df_list:
+            buy_df = pd.DataFrame(buy_df_list).drop_duplicates(subset=["代號"])
             
+            # 計算各族群在建議買進清單中的分佈以便勾選
+            group_counts = buy_df["族群"].value_counts().reset_index()
+            group_counts.columns = ["族群", "建議買進個股數"]
+            group_counts.insert(0, "選取", False)
+
+            edited_group_counts = st.data_editor(
+                group_counts,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in group_counts.columns if c != "選取"],
+                key="ed_buy_group_selection",
+            )
+
+            selected_groups = edited_group_counts[edited_group_counts["選取"] == True]["族群"].tolist()
+
+            st.markdown("---")
+            st.markdown("#### 🎯 建議買進清單中的族群個股明細")
+
             if selected_groups:
-                filtered_stocks = fii_temp[
-                    (fii_temp["族群"].isin(selected_groups)) & 
-                    (fii_temp["外本比(%)"] > 0) & 
-                    (fii_temp["投本比(%)"] > 0)
-                ].sort_values(by="雙法人合佔比(%)", ascending=False)
-                
-                if not filtered_stocks.empty:
-                    st.success(f"目前顯示已勾選族群：`{', '.join(selected_groups)}` 的個股（外本比與投本比皆 > 0）")
-                    st.dataframe(filtered_stocks, use_container_width=True, hide_index=True)
+                filtered_buy_stocks = buy_df[buy_df["族群"].isin(selected_groups)].sort_values(by="雙法人合佔比(%)", ascending=False)
+                if not filtered_buy_stocks.empty:
+                    st.success(f"目前顯示已勾選族群：`{', '.join(selected_groups)}` 的建議買進個股")
+                    st.dataframe(filtered_buy_stocks, use_container_width=True, hide_index=True)
                 else:
-                    st.info("所選族群中目前沒有符合「外本比 > 0 且 投本比 > 0」條件的個股資料。")
+                    st.info("所選族群中目前沒有符合條件的建議買進個股。")
             else:
-                st.caption("👆 請在上方『雙法人共同擴散總表』左側勾選您想檢視的族群，即可在此處展開對應的個股清單。")
+                st.caption("👆 請在上方勾選您想檢視的族群，即可在此處展開對應的建議買進個股清單。")
+        else:
+            st.info("目前『建議買進名單』中沒有可用的詳細市場數據。")
     else:
-        st.info("目前沒有雙法人共同擴散資料。")
+        st.info("目前『建議買進名單』中沒有任何股票。")
 
 
 with tab2:

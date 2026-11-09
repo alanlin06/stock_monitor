@@ -21,10 +21,11 @@ st.set_page_config(
 st.title("台股強勢策略")
 
 DB_FILE = "industry_db.json"
+BUY_TRACK_FILE = "buy_track_db.json"  # 用於持久化收集建議買進的股票清單
 
 
 # =========================================================
-# 族群資料庫管理
+# 族群資料庫與買進追蹤清單管理
 # =========================================================
 
 def load_db():
@@ -60,8 +61,34 @@ def save_db(db_data):
         st.error(f"儲存檔案失敗: {e}")
 
 
+def load_buy_track_db():
+    if os.path.exists(BUY_TRACK_FILE):
+        try:
+            with open(BUY_TRACK_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)  # 格式: {代號: {第一次被收錄日期, 相關資訊...}}
+        except Exception:
+            pass
+    return {}
+
+
+def save_buy_track_db(track_data):
+    try:
+        with open(BUY_TRACK_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                track_data,
+                f,
+                ensure_ascii=False,
+                indent=4,
+            )
+    except Exception as e:
+        st.error(f"儲存追蹤檔案失敗: {e}")
+
+
 if "user_industry_map" not in st.session_state:
     st.session_state.user_industry_map = load_db()
+
+if "buy_track_list" not in st.session_state:
+    st.session_state.buy_track_list = load_buy_track_db()
 
 
 # =========================================================
@@ -455,6 +482,42 @@ def build_dataframe_for_codes(codes_list):
 
 
 # =========================================================
+# 產生各法人個股資料
+# =========================================================
+
+df_amt = build_dataframe_for_codes(amt_top100_codes)
+df_fii = build_dataframe_for_codes(fii_top100_codes)
+df_sitc = build_dataframe_for_codes(sitc_top100_codes)
+
+
+# =========================================================
+# 持續收集「建議買進」股票並更新追蹤資料庫
+# =========================================================
+
+def update_buy_tracking(df_fii, df_sitc):
+    tracked = st.session_state.buy_track_list
+    
+    current_candidates = pd.concat([df_fii, df_sitc]).drop_duplicates(subset=["代號"])
+    if not current_candidates.empty:
+        buy_cond = current_candidates["AI-20日模型狀態"].str.contains("建議買進", na=False)
+        matched_df = current_candidates[buy_cond]
+        
+        for _, row in matched_df.iterrows():
+            code = str(row["代號"])
+            if code not in tracked:
+                tracked[code] = {
+                    "首次納入日期": latest_date,
+                    "官方名稱": row["官方名稱"],
+                    "族群": row["族群"]
+                }
+                
+    save_buy_track_db(tracked)
+    return tracked
+
+tracked_buy_dict = update_buy_tracking(df_fii, df_sitc)
+
+
+# =========================================================
 # 族群籌碼擴散、法人強度與市場注意力模型
 # =========================================================
 
@@ -570,14 +633,6 @@ def build_common_group_summary(d_fii, d_sitc):
     return result
 
 
-# =========================================================
-# 產生各法人個股資料
-# =========================================================
-
-df_amt = build_dataframe_for_codes(amt_top100_codes)
-df_fii = build_dataframe_for_codes(fii_top100_codes)
-df_sitc = build_dataframe_for_codes(sitc_top100_codes)
-
 grp_fii = build_group_summary(df_fii, "外資")
 grp_sitc = build_group_summary(df_sitc, "投信")
 grp_common = build_common_group_summary(df_fii, df_sitc)
@@ -669,9 +724,9 @@ def update_map_from_editor(edited_df):
 # 分頁介面
 # =========================================================
 
-tab1, tab_radar, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab_track, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🤝 雙法人共同擴散",
-    "🎯 雷達模型建議",
+    "🎯 建議買進持續追蹤",
     "🔥 雙法人共識",
     "🌍 外資族群雷達",
     "🏛️ 投信族群雷達",
@@ -733,51 +788,69 @@ with tab1:
         st.info("目前沒有雙法人共同擴散資料。")
 
 
-with tab_radar:
-    st.markdown("### 🎯 雷達模型建議（建議買進清單）")
-    st.caption("篩選邏輯：從外資雷達與投信雷達中，抓出 AI-20日模型狀態包含「建議買進」的股票。")
+with tab_track:
+    st.markdown("### 🎯 建議買進持續追蹤清單")
+    st.caption("說明：只要股票觸發「建議買進」狀態即會被收錄並持續累積，不會因後續狀態改變而被剃除。同時系統會比對最新收盤價是否超越前一交易日高點，給予紅色注意燈號提示。")
 
-    # 篩選外資雷達中建議買進的股票
-    if not df_fii.empty:
-        fii_buy = df_fii[df_fii["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy()
-    else:
-        fii_buy = pd.DataFrame()
+    if tracked_buy_dict:
+        tracked_codes = list(tracked_buy_dict.keys())
+        
+        # 從當日完整市場資料或歷史資料庫組合詳細數據
+        all_market_pool = pd.concat([df_fii, df_sitc, df_amt]).drop_duplicates(subset=["代號"])
+        
+        track_rows = []
+        for code in tracked_codes:
+            info_meta = tracked_buy_dict[code]
+            match_row = all_market_pool[all_market_pool["代號"] == code]
+            
+            close_p = 0.0
+            pct_chg = 0.0
+            ai_status = "持續追蹤中"
+            score = 0.0
+            ind = info_meta.get("族群", "未分類")
+            
+            if not match_row.empty:
+                r = match_row.iloc[0]
+                close_p = r["收盤價"]
+                pct_chg = r["漲跌幅(%)"]
+                ai_status = r["AI-20日模型狀態"]
+                score = r["模型分數"]
+                ind = r["族群"]
 
-    # 篩選投信雷達中建議買進的股票
-    if not df_sitc.empty:
-        sitc_buy = df_sitc[df_sitc["AI-20日模型狀態"].str.contains("建議買進", na=False)].copy()
-    else:
-        sitc_buy = pd.DataFrame()
+            # 計算前一日價格高點判斷（以歷史資料前一日收盤或配合漲跌幅估算前日高點）
+            prev_high_est = close_p / (1 + (pct_chg / 100)) if pct_chg != 0 else close_p
+            
+            # 注意燈號判斷：若當前收盤價大於前一日價格高點 (或前一日估算價)，列入紅色注意燈號
+            note_light = "🟢 正常"
+            if close_p > prev_high_est and pct_chg > 0:
+                note_light = "🔴 紅色注意燈號 (突破前高/強勢)"
 
-    st.markdown("#### 🌍 外資雷達 - 建議買進名單")
-    if not fii_buy.empty:
-        ed_fii_buy = st.data_editor(
-            fii_buy,
+            track_rows.append({
+                "代號": code,
+                "官方名稱": info_meta["官方名稱"],
+                "族群": ind,
+                "首次納入日期": info_meta["首次納入日期"],
+                "最新模型狀態": ai_status,
+                "模型分數": score,
+                "收盤價": close_p,
+                "漲跌幅(%)": pct_chg,
+                "注意燈號": note_light
+            })
+
+        df_track_result = pd.DataFrame(track_rows)
+        
+        ed_track = st.data_editor(
+            df_track_result,
             use_container_width=True,
             hide_index=True,
-            disabled=[c for c in fii_buy.columns if c not in ["族群"]],
-            key="ed_fii_radar_buy",
+            disabled=[c for c in df_track_result.columns if c not in ["族群"]],
+            key="ed_buy_track_table",
         )
-        if st.button("💾 儲存外資雷達建議買進族群修改", key="btn_save_fii_radar"):
-            update_map_from_editor(ed_fii_buy)
+        
+        if st.button("💾 儲存追蹤清單族群修改", key="btn_save_track_map"):
+            update_map_from_editor(ed_track)
     else:
-        st.info("目前外資雷達中沒有模型狀態為「建議買進」的股票。")
-
-    st.markdown("---")
-
-    st.markdown("#### 🏛️ 投信雷達 - 建議買進名單")
-    if not sitc_buy.empty:
-        ed_sitc_buy = st.data_editor(
-            sitc_buy,
-            use_container_width=True,
-            hide_index=True,
-            disabled=[c for c in sitc_buy.columns if c not in ["族群"]],
-            key="ed_sitc_radar_buy",
-        )
-        if st.button("💾 儲存投信雷達建議買進族群修改", key="btn_save_sitc_radar"):
-            update_map_from_editor(ed_sitc_buy)
-    else:
-        st.info("目前投信雷達中沒有模型狀態為「建議買進」的股票。")
+        st.info("目前尚無被收錄的「建議買進」追蹤個股。")
 
 
 with tab2:

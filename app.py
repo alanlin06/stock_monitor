@@ -630,18 +630,47 @@ grp_common = build_common_group_summary(df_fii, df_sitc)
 
 
 # =========================================================
-# 持續追蹤買進清單邏輯 (持久化更新)
+# 持續追蹤買進清單邏輯 (條件更新：模型為建議買進 且 雙法人皆買超)
 # =========================================================
 
 def update_buy_tracking_list():
     current_track = st.session_state.buy_track_list.copy()
     
+    # 建立投信投本比對照字典以便快速檢查
+    sitc_map = {}
+    if not df_sitc.empty:
+        sitc_map = df_sitc.set_index("代號")["投本比(%)"].to_dict()
+
     active_buy_codes = set()
-    for df_source in [df_fii, df_sitc]:
-        if not df_source.empty:
-            matched = df_source[df_source["AI-20日模型狀態"].str.contains("建議買進", na=False)]
-            for _, r in matched.iterrows():
-                active_buy_codes.add(str(r["代號"]))
+    
+    # 檢查外資雷達中的股票
+    if not df_fii.empty:
+        for _, r in df_fii.iterrows():
+            code = str(r["代號"])
+            model_status = str(r["AI-20日模型狀態"])
+            fii_ratio = float(r["外本比(%)"])
+            sitc_ratio = float(sitc_map.get(code, 0.0))
+            
+            # 條件：模型狀態為建議買進 且 外本比 > 0 且 投本比 > 0 (雙法人都有買)
+            if "建議買進" in model_status and fii_ratio > 0 and sitc_ratio > 0:
+                active_buy_codes.add(code)
+
+    # 檢查投信雷達中的股票
+    if not df_sitc.empty:
+        for _, r in df_sitc.iterrows():
+            code = str(r["代號"])
+            model_status = str(r["AI-20日模型狀態"])
+            sitc_ratio = float(r["投本比(%)"])
+            
+            # 從 df_fii 取得外本比
+            fii_ratio = 0.0
+            if not df_fii.empty:
+                sub_fii = df_fii[df_fii["代號"].astype(str) == code]
+                if not sub_fii.empty:
+                    fii_ratio = float(sub_fii.iloc[0]["外本比(%)"])
+
+            if "建議買進" in model_status and fii_ratio > 0 and sitc_ratio > 0:
+                active_buy_codes.add(code)
 
     updated_track = {}
     for code in active_buy_codes:
@@ -767,9 +796,9 @@ tab_buy_suggest, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 ])
 
 with tab_buy_suggest:
-    st.markdown("### 🎯 建議買進名單（持續追蹤與突破過熱燈號）")
+    st.markdown("### 🎯 建議買進名單（雙法人皆買超 ＆ 持續追蹤與燈號）")
     st.caption(
-        "篩選邏輯：只要股票在模型狀態中維持「建議買進」即會持續追蹤保留；"
+        "篩選邏輯：僅納入模型狀態為「建議買進」且「外資與投信皆有買超（外本比 > 0 且 投本比 > 0）」的股票；"
         "若當日收盤價格大於前一日交易日之高點，將自動標示🔴【突破前高/過熱紅燈】。"
     )
 
@@ -799,7 +828,7 @@ with tab_buy_suggest:
         if st.button("💾 儲存建議買進名單族群修改", key="btn_save_buy_track"):
             update_map_from_editor(ed_track)
     else:
-        st.info("目前沒有符合持續追蹤條件的建議買進股票。")
+        st.info("目前沒有同時符合「建議買進」且「雙法人皆買超」條件的股票。")
 
 
 with tab1:
@@ -813,10 +842,8 @@ with tab1:
     if track_data:
         track_codes = list(track_data.keys())
         
-        # 建立建議買進個股的暫存 DataFrame
         buy_df_list = []
         for c in track_codes:
-            # 從 df_fii 或 df_sitc 抓取完整數據
             matched_row = None
             for df_source in [df_fii, df_sitc]:
                 if not df_source.empty:
@@ -830,7 +857,6 @@ with tab1:
         if buy_df_list:
             buy_df = pd.DataFrame(buy_df_list).drop_duplicates(subset=["代號"])
             
-            # 計算各族群在建議買進清單中的分佈以便勾選
             group_counts = buy_df["族群"].value_counts().reset_index()
             group_counts.columns = ["族群", "建議買進個股數"]
             group_counts.insert(0, "選取", False)

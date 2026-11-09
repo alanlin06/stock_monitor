@@ -947,4 +947,71 @@ with tab4:
         st.dataframe(grp_sitc, use_container_width=True, hide_index=True)
 
         st.markdown("#### 投信族群正向個股")
-        positive_sitc = df_
+        positive_sitc = df_sitc[df_sitc["投本比(%)"] > 0].copy()
+
+        if not positive_sitc.empty:
+            ed_sitc_positive = st.data_editor(
+                positive_sitc,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[c for c in positive_sitc.columns if c not in ["族群"]],
+                key="ed_sitc_positive",
+            )
+
+            if st.button("💾 儲存投信族群修改", key="btn_save_sitc"):
+                update_map_from_editor(ed_sitc_positive)
+        else:
+            st.info("目前投信 TOP 100 中沒有投本比 > 0 的資料。")
+    else:
+        st.info("目前無投信族群資料。")
+
+
+with tab5:
+    st.markdown("### 💰 成交值 TOP 100")
+    st.caption("成交值不直接決定法人籌碼強度；在族群雷達中作為『市場注意力』的獨立確認因子。")
+
+    if not df_amt.empty:
+        ed_amt = st.data_editor(
+            df_amt,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_amt.columns if c not in ["族群"]],
+            key="ed_amt_top100",
+        )
+
+        if st.button("💾 儲存成交值族群修改", key="btn_save_amt"):
+            update_map_from_editor(ed_amt)
+    else:
+        st.info("目前無符合條件的成交值資料。")
+
+
+with tab6:
+    st.markdown("### 📋 法人個股 TOP 100")
+
+    st.markdown("#### 🌍 外資買超 TOP 100")
+    if not df_fii.empty:
+        ed_fii = st.data_editor(
+            df_fii,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_fii.columns if c not in ["族群"]],
+            key="ed_fii_top100",
+        )
+        if st.button("💾 儲存外資個股族群修改", key="btn_save_fii_top100"):
+            update_map_from_editor(ed_fii)
+    else:
+        st.info("目前無符合條件的外資買超資料。")
+
+    st.markdown("#### 🏛️ 投信族群雷達")
+    if not df_sitc.empty:
+        ed_sitc = st.data_editor(
+            df_sitc,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[c for c in df_sitc.columns if c not in ["族群"]],
+            key="ed_sitc_top100",
+        )
+        if st.button("💾 儲存投信個股族群修改", key="btn_save_sitc_top100"):
+            update_map_from_editor(ed_sitc)
+    else:
+        st.info("目前無符合條件的投信買超資料。")
